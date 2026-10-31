@@ -57,7 +57,7 @@ void printLinkedFuns (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pIm
     int cnt = 0;
     printf("Found linked functions:\n");
     for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA) (hBEGIN + pImportDesc->OriginalFirstThunk);
-        pOriginalFirstThunk->u1.AddressOfData != NULL; ++pOriginalFirstThunk)
+        pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
         {
             PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
             char buf[31] = {0};
@@ -77,8 +77,9 @@ int main (void) {
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( hBEGIN + pDosHeader->e_lfanew );
 
-    // PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
-    // (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IAT].VirtualAddress);
+    // IAT
+    PIMAGE_IMPORT_DESCRIPTOR pImportAddressTable = (PIMAGE_IMPORT_DESCRIPTOR)
+    (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress);
 
     // 1 import descriptor per linked DLL
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
