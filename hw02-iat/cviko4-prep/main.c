@@ -60,9 +60,16 @@ void printLinkedFuns (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pIm
         pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
         {
             PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
-            char buf[31] = {0};
-            if ( strcpy_s(buf, 30, pImportByName->Name) == 0 ) {
+            char buf[64] = {0};
+            if ( strcpy_s(buf, 64, pImportByName->Name) == 0 ) {
                 printf("\t- %s\n", buf);
+                if (strncmp("malloc", buf, 6) == 0) {
+                    printf("Found malloc!\n");
+                    // maybe need to change type here
+                    printf("malloc import address (FirstThunk): %p\n", pImportDesc->FirstThunk);
+                    // prints 0000303C
+                    // IAT of heap.dll: program_offset + 303C
+                }
                 ++cnt;
             }
             else {
@@ -71,7 +78,17 @@ void printLinkedFuns (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pIm
         }
     printf("Found %d linked functions in %s.\n", cnt, libName);
 }
+/**
+      api-ms-win-crt-heap-l1-1-0.dll
+                40303C Import Address Table
+                4035E4 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
 
+                   16 _set_new_mode
+                   18 free
+                   19 malloc 
+ */
 int main (void) {
     HMODULE hPEFile = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
@@ -97,7 +114,6 @@ int main (void) {
                               CREATE_NEW,             // create new file only
                               FILE_ATTRIBUTE_NORMAL,  // normal file
                               NULL);                  // no attr. template
-#elif TEST2
     int result = MessageBoxA(
         NULL,                        // No owner window
         "Hello, this is MessageBoxA!", // Message text
@@ -105,11 +121,13 @@ int main (void) {
         MB_OK | MB_ICONINFORMATION   // OK button + Info icon
     );
 #endif
+    void * ptr = malloc(9);
     for (; pImportDescriptor != pImportDescriptorEnd; ++pImportDescriptor) {
-        printf("======================================\n");
+        ("======================================\n");
         printLinkedFuns(pDosHeader, pImportDescriptor);
+        // printLinkedFuns(pDosHeader, pImportDescriptorEnd);
         printf("======================================\n");
     }
-
+    free(ptr);
     return 0;
 }
