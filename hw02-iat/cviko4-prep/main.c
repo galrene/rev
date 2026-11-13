@@ -2,6 +2,29 @@
 #include <windows.h>
 #include <winuser.h>
 
+/**
+ * > dumpbin /imports main.exe
+ *     api-ms-win-crt-heap-l1-1-0.dll
+             140006140 Import Address Table
+             140009188 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
+
+                          19 malloc
+                          16 _set_new_mode
+                          17 calloc
+                          18 free
+ */
+// useful windows commands
+// =======================
+//
+// compile with address sanitizer
+// cl /fsanitize=address /Zi /Od /MD main.c
+// 
+// compile and run in powershell that doesn't support && operator :)
+// cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
+// 
+
 #define ALLOCATIONS_MAX 10000
 
 size_t g_AllocatedMemSize[ALLOCATIONS_MAX] = {0};
@@ -31,7 +54,10 @@ void MallocDebug_Done (void) {}
  * 1. pamat sa alokovala
  * 2. velkost alokovanej pamate
  */
-void MallocDebug_malloc (void) {
+void __cdecl MallocDebug_malloc (size_t size) {
+    printf("User tried to allocate %zu bytes\n", size);
+    puts("FUCK THE USER THO YOOOO");
+    return;
 }
 void MallocDebug_calloc (void) {}
 void MallocDebug_realloc (void) {}
@@ -48,6 +74,19 @@ void MallocDebug_free (void) {
  * Import Address Table: table with resolved addresses
  */
 #define hBEGIN ((BYTE*)pDosHeader)
+
+static BOOL UnlockFirstThunk(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImp)
+{   
+    PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(hBEGIN + pImp->FirstThunk);
+
+    SIZE_T count = 0;
+    while (t[count].u1.Function != 0)
+        count++;
+
+    SIZE_T pBytes  = count * sizeof(IMAGE_THUNK_DATA);
+    DWORD pOldProt = 0;
+    return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
+}
 
 void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
 {
@@ -78,15 +117,26 @@ void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pI
                 pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pFirstThunk->u1.Function);
                 // pImportByName is now PIMAGE_IMPORT_BY_NAME
             }
-            
-            printf("\t hBEGIN + pFirstThunk->u1.Function: %p\n", hBEGIN + pFirstThunk->u1.Function);
-            printf("\t pFirstThunk->u1.Function: %p\n", pFirstThunk->u1.Function);
-            printf("\t &malloc: %p\n", (ULONG_PTR)&malloc);
-            
             if ((ULONG_PTR)&malloc == pFirstThunk->u1.Function) {
-                puts("Found malloc, breaking imported address...");
-                pFirstThunk->u1.Function += 10;
-                puts("Calling malloc, should crash:");
+
+                // printf("\t hBEGIN + pFirstThunk->u1.Function:\t%p\n", hBEGIN + pFirstThunk->u1.Function);
+                printf("\t pFirstThunk->u1.Function:\t\t%p\n", (void *) pFirstThunk->u1.Function);
+                
+                printf("\t &malloc:\t\t\t\t%p\n", (void *)&malloc);
+                printf("\t &MallocDebug_malloc:\t\t\t%p\n", (void *)&MallocDebug_malloc);
+                
+                puts("Found malloc, switching it's address...");
+
+                if ( UnlockFirstThunk(pDosHeader, pImportDesc) == 0) {
+                    DWORD r = GetLastError();
+                    printf("VirtualProtect failed.\n Error: %d\n", r);
+                    return;
+                }
+                puts("FirstThunk unlocked for writing.\n");
+                
+                pFirstThunk->u1.Function = (ULONGLONG) &MallocDebug_malloc;
+                puts("Calling malloc, should run MallocDebug:");
+                
                 int * ptr = malloc(5);
             }
             
@@ -169,10 +219,6 @@ int main (void) {
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( hBEGIN + pDosHeader->e_lfanew );
 
-    // IAT
-    // PIMAGE_IMPORT_DESCRIPTOR pImportAddressTable = (PIMAGE_IMPORT_DESCRIPTOR)
-    // (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress);
-
     // 1 import descriptor per linked DLL
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
     (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
@@ -212,17 +258,3 @@ int main (void) {
     
     return 0;
 }
-/**
- * > dumpbin /imports main.exe
- *     api-ms-win-crt-heap-l1-1-0.dll
-             140006140 Import Address Table
-             140009188 Import Name Table
-                     0 time date stamp
-                     0 Index of first forwarder reference
-
-                          19 malloc
-                          16 _set_new_mode
-                          17 calloc
-                          18 free
- */
-// cl /fsanitize=address /Zi /Od main.c
