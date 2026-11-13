@@ -2,6 +2,8 @@
 #include <windows.h>
 #include <winuser.h>
 
+// useful windows commands
+// =======================
 /**
  * > dumpbin /imports main.exe
  *     api-ms-win-crt-heap-l1-1-0.dll
@@ -15,33 +17,27 @@
                           17 calloc
                           18 free
  */
-// useful windows commands
-// =======================
 //
 // compile with address sanitizer
 // cl /fsanitize=address /Zi /Od /MD main.c
 // 
 // compile and run in powershell that doesn't support && operator :)
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
-// 
 
-#define ALLOCATIONS_MAX 10000
+// function pointer declaration
+// ============================
+// RETURN_TYPE (*FUNCTION_NAME)(ARG1_TYPE, ARG2_TYPE, ...);
 
-size_t g_AllocatedMemSize[ALLOCATIONS_MAX] = {0};
+void * (*g_OrigMalloc)(size_t);
+// calloc
+// realloc
+void (*g_OrigFree)(void *);
 
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
  * a free a změní jejich adresu na adresy substitučních funkcí
  */
 void MallocDebug_Init (void) {
-// 1. Chceme povolit zapis do IAT
-    // BOOL WINAPI VirtualProtect (
-    //   (LPVOID) lpAddress,   // adresa bloku, jehož stav ochrany chceme měnit
-    //   (size_t) dwSize,      // velikost bloku
-    //   PAGE_READWRITE,       // příznaky ochrany bloku
-    //   (PDWORD)&dwOldProtect // stará hodnota příznaků
-    // );
-
 }
 /**
  * Vrátí IAT do původního stavu a vypíše případné zbytky tabulky,
@@ -49,24 +45,47 @@ void MallocDebug_Init (void) {
  */
 void MallocDebug_Done (void) {}
 
+
+#define ALLOCATIONS_MAX 50
+size_t g_AllocatedMemory[ALLOCATIONS_MAX]     = {0};
+size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
+size_t g_AllocCnt = 0;
+
 /**
  * loguju:
  * 1. pamat sa alokovala
  * 2. velkost alokovanej pamate
  */
-void __cdecl MallocDebug_malloc (size_t size) {
-    printf("User tried to allocate %zu bytes\n", size);
-    puts("FUCK THE USER THO YOOOO");
-    return;
+void * MallocDebug_malloc (size_t size) {
+    printf("User wants to allocate %zu bytes\n", size);
+    
+    void * ptr = g_Origmalloc(size);
+    g_AllocatedMemory[g_AllocCnt++] = ptr;
+    g_AllocatedMemorySize[g_AllocCnt++] = size;
+    return ptr;
 }
 void MallocDebug_calloc (void) {}
 void MallocDebug_realloc (void) {}
+
 /**
- * Uvolňující substituční funkce budou tento záznam opět rušit
- * (a stěžovat si, pokud by měly zrušit neznámou nebo uz dříve
- * zrušenou alokaci).
+ * Budou záznam [alokace] rušit
+ * stěžovat si, pokud by měly zrušit neznámou,
+ * nebo uz dříve zrušenou alokaci
  */
-void MallocDebug_free (void) {
+void MallocDebug_free (void * ptr) {
+    printf("User wants to free %p\n", ptr);
+    
+    for (size_t i = 0; i < g_AllocCnt; ++i) {
+        if (g_AllocatedMemory[i] == ptr) {
+            g_AllocatedMemory[i] = 0;
+            --g_AllocCnt;
+            g_OriginalFree(ptr);
+            return;
+        }
+    }
+
+    puts("Requested memory isn't allocated - already freed or never allocated.");
+    return;
 }
 
 /*
@@ -90,22 +109,12 @@ static BOOL UnlockFirstThunk(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIP
 
 void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
 {
-    char * libName = ( hBEGIN + pImportDesc->Name );
-    // if (strncmp(libName, "api-ms-win-crt-heap-l1-1-0.dll", 30) != 0)
-        // return;
-    // printf("FirstThunks: \n");
-    // printf("Library name: %s\n", libName);
-    // timedatestamp will be non-zero if imports are bound
-    // printf("Import bound? ");
-    // printf(pImportDesc->TimeDateStamp != 0UL ? "Yes\n" : "No\n");
-
-    printf("Imported functions' addresses:\n");
     // PIMAGE_THUNK_DATA arr is 0-terminated
     for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA) (hBEGIN + pImportDesc->FirstThunk);
         pFirstThunk->u1.AddressOfData != 0; ++pFirstThunk)
         {
             // check if address of data is ordinal
-            // a teda ci pFirstThunk->u1.AddressOfData je typu PIMAGE_THUNK_DATA 
+            // a teda ci pFirstThunk->u1.Function je typu PIMAGE_THUNK_DATA 
             void * pImportByName;
             if ( isOrdinalThunk(pFirstThunk) ) {
                 pImportByName = (PIMAGE_THUNK_DATA) (hBEGIN + pFirstThunk->u1.Function);
@@ -119,22 +128,23 @@ void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pI
             }
             if ((ULONG_PTR)&malloc == pFirstThunk->u1.Function) {
 
-                // printf("\t hBEGIN + pFirstThunk->u1.Function:\t%p\n", hBEGIN + pFirstThunk->u1.Function);
                 printf("\t pFirstThunk->u1.Function:\t\t%p\n", (void *) pFirstThunk->u1.Function);
-                
                 printf("\t &malloc:\t\t\t\t%p\n", (void *)&malloc);
                 printf("\t &MallocDebug_malloc:\t\t\t%p\n", (void *)&MallocDebug_malloc);
                 
-                puts("Found malloc, switching it's address...");
+                puts("Found malloc.");
 
                 if ( UnlockFirstThunk(pDosHeader, pImportDesc) == 0) {
                     DWORD r = GetLastError();
                     printf("VirtualProtect failed.\n Error: %d\n", r);
                     return;
                 }
-                puts("FirstThunk unlocked for writing.\n");
+                puts("Unlocked it's IAT for writing.\n");
                 
                 pFirstThunk->u1.Function = (ULONGLONG) &MallocDebug_malloc;
+                
+                puts("Replaced malloc with MallocDebug_malloc.\n");
+                
                 puts("Calling malloc, should run MallocDebug:");
                 
                 int * ptr = malloc(5);
@@ -203,17 +213,7 @@ int printOGFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR p
     printf("Found %d linked functions in %s.\n", cnt, libName);
     return 0;
 }
-/**
-      api-ms-win-crt-heap-l1-1-0.dll
-                40303C Import Address Table
-                4035E4 Import Name Table
-                     0 time date stamp
-                     0 Index of first forwarder reference
 
-                   16 _set_new_mode
-                   18 free
-                   19 malloc 
- */
 int main (void) {
     HMODULE hPEFile = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
