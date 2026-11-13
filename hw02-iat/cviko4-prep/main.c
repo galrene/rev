@@ -49,26 +49,100 @@ void MallocDebug_free (void) {
  */
 #define hBEGIN ((BYTE*)pDosHeader)
 
-void printLinkedFuns (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
+void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
 {
     char * libName = ( hBEGIN + pImportDesc->Name );
+    // if (strncmp(libName, "api-ms-win-crt-heap-l1-1-0.dll", 30) != 0)
+        // return;
+    // printf("FirstThunks: \n");
+    // printf("Library name: %s\n", libName);
+    // timedatestamp will be non-zero if imports are bound
+    // printf("Import bound? ");
+    // printf(pImportDesc->TimeDateStamp != 0UL ? "Yes\n" : "No\n");
+
+    printf("Imported functions' addresses:\n");
+    // PIMAGE_THUNK_DATA arr is 0-terminated
+    for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA) (hBEGIN + pImportDesc->FirstThunk);
+        pFirstThunk->u1.AddressOfData != 0; ++pFirstThunk)
+        {
+            // check if address of data is ordinal
+            // a teda ci pFirstThunk->u1.AddressOfData je typu PIMAGE_THUNK_DATA 
+            void * pImportByName;
+            if ( isOrdinalThunk(pFirstThunk) ) {
+                pImportByName = (PIMAGE_THUNK_DATA) (hBEGIN + pFirstThunk->u1.Function);
+                // pImportByName is now PIMAGE_THUNK_DATA
+                printf("Found an ordinal, won't have a name!\n");
+                continue;
+            }
+            else {
+                pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pFirstThunk->u1.Function);
+                // pImportByName is now PIMAGE_IMPORT_BY_NAME
+            }
+            
+            printf("\t hBEGIN + pFirstThunk->u1.Function: %p\n", hBEGIN + pFirstThunk->u1.Function);
+            printf("\t pFirstThunk->u1.Function: %p\n", pFirstThunk->u1.Function);
+            printf("\t &malloc: %p\n", (ULONG_PTR)&malloc);
+            
+            if ((ULONG_PTR)&malloc == pFirstThunk->u1.Function) {
+                puts("Found malloc, breaking imported address...");
+                pFirstThunk->u1.Function += 10;
+                puts("Calling malloc, should crash:");
+                int * ptr = malloc(5);
+            }
+            
+        }
+}
+
+// When MSB of AddressOfData is 1, it's an ordinal and
+// pFirstThunk->u1.AddressOfData is of type PIMAGE_THUNK_DATA.
+
+BOOL isOrdinalThunk(PIMAGE_THUNK_DATA pThunk)
+{
+    return IMAGE_SNAP_BY_ORDINAL(pThunk->u1.Ordinal) ? TRUE : FALSE;
+}
+
+
+int printOGFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
+{
+    char * libName = ( hBEGIN + pImportDesc->Name );
+    // if (strncmp(libName, "api-ms-win-crt-heap-l1-1-0.dll", 30) != 0)
+        // return;
+    // printf("OriginalFirstThunks: \n");
     printf("Library name: %s\n", libName);
+    // timedatestamp will be non-zero if imports are bound
+    printf("Import bound? ");
+    printf(pImportDesc->TimeDateStamp != 0UL ? "Yes\n" : "No\n");
 
     int cnt = 0;
     printf("Found linked functions:\n");
+    // PIMAGE_THUNK_DATA arr is 0-terminated
     for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA) (hBEGIN + pImportDesc->OriginalFirstThunk);
         pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
         {
-            PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
+            // check if address of data is ordinal
+            // a teda ci pFirstThunk->u1.AddressOfData je typu PIMAGE_THUNK_DATA 
+            void * pImportByName;
+            if ( isOrdinalThunk(pOriginalFirstThunk) ) {
+                pImportByName = (PIMAGE_THUNK_DATA) (hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
+                // pImportByName is now PIMAGE_THUNK_DATA
+                printf("Found an ordinal, won't have a name!\n");
+                continue;
+            }
+            else {
+                pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
+                // pImportByName is now PIMAGE_IMPORT_BY_NAME
+            }
+    
             char buf[64] = {0};
-            if ( strcpy_s(buf, 64, pImportByName->Name) == 0 ) {
+            if ( strcpy_s(buf, 64, ((PIMAGE_IMPORT_BY_NAME) pImportByName)->Name) == 0 ) {
                 printf("\t- %s\n", buf);
                 if (strncmp("malloc", buf, 6) == 0) {
-                    printf("Found malloc!\n");
-                    // maybe need to change type here
-                    printf("malloc import address (FirstThunk): %p\n", pImportDesc->FirstThunk);
-                    // prints 0000303C
-                    // IAT of heap.dll: program_offset + 303C
+                    // printf("\t# Found malloc!\n");
+                    printf("\t# malloc's hint: %d\n", ((PIMAGE_IMPORT_BY_NAME) pImportByName)->Hint);
+                    return 1;
+                    // pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pFirstThunk->u1.AddressOfData);
+                    // printFirstThunks(pDosHeader, pImportDesc, pImportByName);
+                    // IAT of heap dll: program_offset + 303C
                 }
                 ++cnt;
             }
@@ -77,6 +151,7 @@ void printLinkedFuns (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pIm
             }
         }
     printf("Found %d linked functions in %s.\n", cnt, libName);
+    return 0;
 }
 /**
       api-ms-win-crt-heap-l1-1-0.dll
@@ -95,13 +170,13 @@ int main (void) {
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( hBEGIN + pDosHeader->e_lfanew );
 
     // IAT
-    PIMAGE_IMPORT_DESCRIPTOR pImportAddressTable = (PIMAGE_IMPORT_DESCRIPTOR)
-    (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress);
+    // PIMAGE_IMPORT_DESCRIPTOR pImportAddressTable = (PIMAGE_IMPORT_DESCRIPTOR)
+    // (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress);
 
     // 1 import descriptor per linked DLL
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
     (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    // end does not point at a descriptor, it's a stopper
+    // end does not point at a descriptor, it's a stopper filled with 0's
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptorEnd = (PIMAGE_IMPORT_DESCRIPTOR)
     (((BYTE*)pImportDescriptor) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size);
 
@@ -122,12 +197,32 @@ int main (void) {
     );
 #endif
     void * ptr = malloc(9);
-    for (; pImportDescriptor != pImportDescriptorEnd; ++pImportDescriptor) {
+
+    for (; (pImportDescriptor != pImportDescriptorEnd) && (pImportDescriptor->Characteristics != 0); ++pImportDescriptor) {
         ("======================================\n");
-        printLinkedFuns(pDosHeader, pImportDescriptor);
-        // printLinkedFuns(pDosHeader, pImportDescriptorEnd);
+        if ( printOGFirstThunks(pDosHeader, pImportDescriptor) == 1) {
+            printf("Found malloc's lib, reading import addresses:\n");
+            printFirstThunks(pDosHeader, pImportDescriptor);
+            break;
+        }
         printf("======================================\n");
     }
+    
     free(ptr);
+    
     return 0;
 }
+/**
+ * > dumpbin /imports main.exe
+ *     api-ms-win-crt-heap-l1-1-0.dll
+             140006140 Import Address Table
+             140009188 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
+
+                          19 malloc
+                          16 _set_new_mode
+                          17 calloc
+                          18 free
+ */
+// cl /fsanitize=address /Zi /Od main.c
