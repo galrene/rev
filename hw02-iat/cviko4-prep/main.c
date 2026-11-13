@@ -24,6 +24,85 @@
 // compile and run in powershell that doesn't support && operator :)
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
+#define hBEGIN ((BYTE*)pDosHeader)
+
+// convert relative virtual address to virtual address (absolute address in memory)
+static void * VA(DWORD rva)
+{
+    BYTE *base = (BYTE *)GetModuleHandle(NULL);
+    return base + rva;
+}
+
+PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc (void) {
+    HMODULE hPEFile = GetModuleHandle(NULL);
+    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
+    PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( VA(pDosHeader->e_lfanew) );
+    
+    // 1 import descriptor per imported DLL
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)
+    (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+    return pImportDesc;
+}
+
+PIMAGE_IMPORT_DESCRIPTOR findImpDescOfFunc (char * funcName) {
+    for ( PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
+          pImportDesc->Characteristics != 0; ++pImportDesc) 
+    {
+        for ( PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA) (VA(pImportDesc->OriginalFirstThunk));
+              pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
+        {
+            PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME) 
+            (VA(pOriginalFirstThunk->u1.AddressOfData));
+    
+            if (strncmp("malloc", pImportByName->Name, 6) == 0) {
+                return pImportDesc;
+            }
+        }
+    }
+    return NULL;
+}
+
+static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
+{   
+    PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImp->FirstThunk));
+
+    SIZE_T count = 0;
+    while (t[count].u1.Function != 0)
+        count++;
+
+    SIZE_T pBytes  = count * sizeof(IMAGE_THUNK_DATA);
+    DWORD pOldProt = 0;
+    return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
+}
+
+BOOL replaceFunc (char * funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc) { 
+    // find import descriptor of funcName's .dll
+    PIMAGE_IMPORT_DESCRIPTOR funcImpDesc = findImpDescOfFunc(funcName);
+    if ( funcImpDesc == NULL ) {
+        printf("No Import Descriptor containing function %s found\n", funcName);
+        return FALSE;
+    }
+
+    // find the func's address in FirstThunk, replace with pNewFunc
+    //    - alebo ju viem retrievnut aj podla poradia/inak dajak?
+    for ( PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA) (VA(funcImpDesc->FirstThunk));
+          pFirstThunk->u1.AddressOfData != 0; ++pFirstThunk)
+    {
+        if ( funcAddr == pFirstThunk->u1.Function ) {
+            if ( UnlockFirstThunk(funcImpDesc) == 0) {
+                DWORD r = GetLastError();
+                printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
+                return FALSE;
+            }
+            pFirstThunk->u1.Function = pNewFunc;
+            return TRUE;
+        }
+    }
+    printf("Given function's address not found in FirstThunk, something's wroong.");
+    return FALSE;
+}
+
+
 // function pointer declaration
 // ============================
 // RETURN_TYPE (*FUNCTION_NAME)(ARG1_TYPE, ARG2_TYPE, ...);
@@ -33,26 +112,40 @@ void * (*g_OrigCalloc)(size_t, size_t)  = NULL; // void * calloc(count, size)
 void * (*g_OrigRealloc)(void *, size_t) = NULL; // void * calloc(ptr, newSize)
 void   (*g_OrigFree)(void *)            = NULL; // void   free (ptr)
 
+void * MallocDebug_malloc (size_t size);
+void MallocDebug_free (void * ptr);
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
  * a free a změní jejich adresu na adresy substitučních funkcí
  */
-void MallocDebug_Init (void) {
+BOOL MallocDebug_Init (void) {
     if (g_OrigMalloc != NULL) { // or other func is not NULL
         puts("Init already called - not doing anything.");
-        return;
+        return FALSE;
     }
-    
     // backup original function addresses
     g_OrigMalloc  = &malloc;
-    g_OrigCalloc  = &calloc;
-    g_OrigRealloc = &realloc;
+    // g_OrigCalloc  = &calloc;
+    // g_OrigRealloc = &realloc;
     g_OrigFree    = &free;
 
-    // replaceFunc("malloc", MallocDebug_malloc);
-    // replaceFunc("calloc", MallocDebug_calloc);
-    // replaceFunc("realloc", MallocDebug_realloc);
-    // replaceFunc("free", MallocDebug_free);
+    if ( ! replaceFunc("malloc", &g_OrigMalloc, &MallocDebug_malloc)) {
+        puts("Replacing malloc failed.");
+        return FALSE;
+    }
+    // if ( ! replaceFunc("calloc", &g_OrigCalloc, &MallocDebug_calloc) ) {
+    //     puts("Replacing calloc failed.");
+    //     return FALSE;
+    // }
+    // if ( ! replaceFunc("realloc", &g_OrigRealloc , &MallocDebug_realloc) ) {
+    //     puts("Replacing realloc failed.");
+    //     return FALSE;
+    // }
+    if ( ! replaceFunc("free", &g_OrigFree, &MallocDebug_free) ) {
+        puts("Replacing free failed.");
+        return FALSE;
+    }
+    return TRUE;
 }
 
 #define ALLOCATIONS_MAX 50
@@ -65,6 +158,7 @@ size_t g_AllocCnt = 0;
  * které budou považovány za memory leaky :)
  */
 void MallocDebug_Done (void) {
+    // restore original IAT state
     if (g_OrigMalloc != NULL) {
         // replaceFunc("malloc", g_OrigMalloc);
         // replaceFunc("calloc", g_OrigCalloc);
@@ -126,25 +220,6 @@ void MallocDebug_free (void * ptr) {
     return;
 }
 
-/*
- * Import Directory    : metadata that describes what to import
- * Import Address Table: table with resolved addresses
- */
-#define hBEGIN ((BYTE*)pDosHeader)
-
-static BOOL UnlockFirstThunk(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImp)
-{   
-    PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(hBEGIN + pImp->FirstThunk);
-
-    SIZE_T count = 0;
-    while (t[count].u1.Function != 0)
-        count++;
-
-    SIZE_T pBytes  = count * sizeof(IMAGE_THUNK_DATA);
-    DWORD pOldProt = 0;
-    return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
-}
-
 void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
 {
     // PIMAGE_THUNK_DATA arr is 0-terminated
@@ -172,7 +247,7 @@ void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pI
                 
                 puts("Found malloc.");
 
-                if ( UnlockFirstThunk(pDosHeader, pImportDesc) == 0) {
+                if ( UnlockFirstThunk(pImportDesc) == 0) {
                     DWORD r = GetLastError();
                     printf("VirtualProtect failed.\n Error: %d\n", r);
                     return;
@@ -252,18 +327,18 @@ int printOGFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR p
     return 0;
 }
 
-int main (void) {
+void printStuff (void) {
     HMODULE hPEFile = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( hBEGIN + pDosHeader->e_lfanew );
 
-    // 1 import descriptor per linked DLL
+    // 1 import descriptor per imported DLL
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
     (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
     // end does not point at a descriptor, it's a stopper filled with 0's
     PIMAGE_IMPORT_DESCRIPTOR pImportDescriptorEnd = (PIMAGE_IMPORT_DESCRIPTOR)
     (((BYTE*)pImportDescriptor) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size);
-
+    
 #ifdef TEST1
     // dummy functions for testing
     HANDLE hFile = CreateFile("test.txt",             // name of the write
@@ -293,6 +368,11 @@ int main (void) {
     }
     
     free(ptr);
-    
+}
+
+int main (void) {
+    if ( ! MallocDebug_Init() ) {
+        return 1;
+    }
     return 0;
 }
