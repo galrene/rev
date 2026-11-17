@@ -5,24 +5,11 @@
 
 // useful windows commands
 // =======================
-/**
- * > dumpbin /imports main.exe
- *     api-ms-win-crt-heap-l1-1-0.dll
-             140006140 Import Address Table
-             140009188 Import Name Table
-                     0 time date stamp
-                     0 Index of first forwarder reference
-
-                          19 malloc
-                          16 _set_new_mode
-                          17 calloc
-                          18 free
- */
 //
-// compile with address sanitizer
+// compile with address sanitizer (+ /MD)
 // cl /fsanitize=address /Zi /Od /MD main.c
 // 
-// compile and run in powershell that doesn't support && operator :)
+// compile and run in powershell version that doesn't support && operator :))
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
 #define hBEGIN ((BYTE*)pDosHeader)
@@ -76,6 +63,7 @@ static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
 }
 
+/* look up import descriptor by Name using funcName. Then find it in it's IAT by funcAddr, replace address with pNewFunc  */ 
 BOOL replaceFunc (char * funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc) { 
     // find import descriptor of funcName's .dll
     PIMAGE_IMPORT_DESCRIPTOR funcImpDesc = findImpDescOfFunc(funcName);
@@ -99,7 +87,7 @@ BOOL replaceFunc (char * funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc) {
             return TRUE;
         }
     }
-    printf("Given function's address not found in FirstThunk, something's wroong.");
+    printf("%s address not found in FirstThunk.\n", funcName);
     return FALSE;
 }
 
@@ -132,7 +120,7 @@ void * MallocDebug_malloc (size_t size) {
     }    
     
     void * ptr = g_OrigMalloc(size);
-    g_AllocatedMemory[g_AllocCnt++] = (uintptr_t) ptr;
+    g_AllocatedMemory[g_AllocCnt] = (uintptr_t) ptr;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
     printf("Allocated %zu bytes @%p\n", size, ptr);
@@ -148,6 +136,7 @@ void MallocDebug_free (void * ptr) {
     for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
         if (g_AllocatedMemory[i] == (uintptr_t) ptr) {
             g_AllocatedMemory[i] = 0;
+            g_AllocatedMemorySize[i] = 0;
             --g_AllocCnt;
             g_OrigFree(ptr);
             printf("Freed memory @%p\n", ptr);
@@ -155,12 +144,16 @@ void MallocDebug_free (void * ptr) {
         }
     }
 
-    puts("Requested memory isn't allocated - already freed or never allocated.");
+    printf("Requested memory @(%p) isn't allocated\n- already freed or never allocated within revgrind init & done block.\n", ptr);
     return;
 }
 
-void MallocDebug_calloc (void) {}
-void MallocDebug_realloc (void) {}
+void MallocDebug_calloc (void) {
+    puts("nada");
+}
+void MallocDebug_realloc (void) {
+    puts("nada");
+}
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
  * a free a změní jejich adresu na adresy substitučních funkcí
@@ -172,23 +165,23 @@ BOOL MallocDebug_Init (void) {
     }
     // backup original function addresses
     g_OrigMalloc  = &malloc;
-    // g_OrigCalloc  = &calloc;
-    // g_OrigRealloc = &realloc;
+    g_OrigCalloc  = &calloc;
+    g_OrigRealloc = &realloc;
     g_OrigFree    = &free;
-
+    
+    // todo: replace ULL with something more proper
     if ( ! replaceFunc("malloc", (ULONGLONG) g_OrigMalloc, (ULONGLONG) MallocDebug_malloc)) {
         puts("Replacing malloc failed.");
         return FALSE;
     }
-    // if ( ! replaceFunc("calloc", &g_OrigCalloc, &MallocDebug_calloc) ) {
-    //     puts("Replacing calloc failed.");
-    //     return FALSE;
-    // }
-    // if ( ! replaceFunc("realloc", &g_OrigRealloc , &MallocDebug_realloc) ) {
-    //     puts("Replacing realloc failed.");
-    //     return FALSE;
-    // }
-    // todo: replace ULL with something more proper
+    if ( ! replaceFunc("calloc", (ULONGLONG) g_OrigCalloc, (ULONGLONG) MallocDebug_calloc) ) {
+        puts("Replacing calloc failed.");
+        return FALSE;
+    }
+    if ( ! replaceFunc("realloc", (ULONGLONG) g_OrigRealloc , (ULONGLONG) MallocDebug_realloc) ) {
+        puts("Replacing realloc failed.");
+        return FALSE;
+    }
     if ( ! replaceFunc("free", (ULONGLONG) g_OrigFree, (ULONGLONG) MallocDebug_free) ) {
         puts("Replacing free failed.");
         return FALSE;
@@ -206,27 +199,33 @@ BOOL MallocDebug_Init (void) {
  * které budou považovány za memory leaky :)
  */
 void MallocDebug_Done (void) {
-    // restore original IAT state
-    if (g_OrigMalloc != NULL) {
-        // replaceFunc("malloc", g_OrigMalloc);
-        // replaceFunc("calloc", g_OrigCalloc);
-        // replaceFunc("realloc", g_OrigRealloc);
-        // replaceFunc("free", g_OrigFree);
+    puts("---------------------------------------");
+    puts("revgrind done");
+    puts("---------------------------------------");
+    if (g_OrigMalloc == NULL) {
+        puts("Done called but revgrind hasn't been initialised.");
+        return;
     }
+    
+    // restore original IAT state
+    // replace malloc (now Debug_malloc) with gOrigMalloc (malloc)
+    replaceFunc("malloc", (ULONGLONG) &malloc, (ULONGLONG) g_OrigMalloc);
+    replaceFunc("calloc", (ULONGLONG) &calloc, (ULONGLONG) g_OrigCalloc);
+    replaceFunc("realloc", (ULONGLONG) &realloc, (ULONGLONG) g_OrigRealloc);
+    puts("Original IAT restored.");
 
     // print memory leaks
-    if (g_AllocCnt != 0) {
-        puts("Memory leaks detected.");
-        for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
-            if (g_AllocatedMemorySize[i] != 0) {
-                printf("Leaked %zu bytes @%llu\n", g_AllocatedMemorySize[i], g_AllocatedMemory[i]);
-            }
+    if (g_AllocCnt == 0) {
+        puts("No memory leaked.");
+        return;
+    }
+
+    puts("Memory leaks:");
+    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
+        if (g_AllocatedMemorySize[i] != 0) {
+            printf("\tLeaked %zu bytes @%p\n", g_AllocatedMemorySize[i], (void *) g_AllocatedMemory[i]);
         }
     }
-    else {
-        puts("No memory leaked.");
-    }
-    puts("Original function addresses restored.");
 }
 
 
@@ -338,53 +337,15 @@ int printOGFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR p
     return 0;
 }
 
-void printStuff (void) {
-    HMODULE hPEFile = GetModuleHandle(NULL);
-    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hPEFile;
-    PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS) ( hBEGIN + pDosHeader->e_lfanew );
-
-    // 1 import descriptor per imported DLL
-    PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)
-    (hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    // end does not point at a descriptor, it's a stopper filled with 0's
-    PIMAGE_IMPORT_DESCRIPTOR pImportDescriptorEnd = (PIMAGE_IMPORT_DESCRIPTOR)
-    (((BYTE*)pImportDescriptor) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size);
-    
-#ifdef TEST1
-    // dummy functions for testing
-    HANDLE hFile = CreateFile("test.txt",             // name of the write
-                              GENERIC_WRITE,          // open for writing
-                              0,                      // do not share
-                              NULL,                   // default security
-                              CREATE_NEW,             // create new file only
-                              FILE_ATTRIBUTE_NORMAL,  // normal file
-                              NULL);                  // no attr. template
-    int result = MessageBoxA(
-        NULL,                        // No owner window
-        "Hello, this is MessageBoxA!", // Message text
-        "API Example",               // Title bar text
-        MB_OK | MB_ICONINFORMATION   // OK button + Info icon
-    );
-#endif
-    void * ptr = malloc(9);
-
-    for (; (pImportDescriptor != pImportDescriptorEnd) && (pImportDescriptor->Characteristics != 0); ++pImportDescriptor) {
-        ("======================================\n");
-        if ( printOGFirstThunks(pDosHeader, pImportDescriptor) == 1) {
-            printf("Found malloc's lib, reading import addresses:\n");
-            printFirstThunks(pDosHeader, pImportDescriptor);
-            break;
-        }
-        printf("======================================\n");
-    }
-    
-    free(ptr);
-}
-
 int main (void) {  
     if ( ! MallocDebug_Init() ) {
         puts("Init failed.");
-        return 1;
     }
+    void * ptr = malloc(9);
+    void * ptr2 = calloc(9, sizeof(BYTE)); // 9x 1B
+    void * ptr3 = realloc(ptr, 10);
+
+    free(ptr);
+    MallocDebug_Done();
     return 0;
 }
