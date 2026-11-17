@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <windows.h>
 #include <winuser.h>
+#include <assert.h>
 
 // useful windows commands
 // =======================
@@ -112,8 +113,54 @@ void * (*g_OrigCalloc)(size_t, size_t)  = NULL; // void * calloc(count, size)
 void * (*g_OrigRealloc)(void *, size_t) = NULL; // void * calloc(ptr, newSize)
 void   (*g_OrigFree)(void *)            = NULL; // void   free (ptr)
 
-void * MallocDebug_malloc (size_t size);
-void MallocDebug_free (void * ptr);
+
+#define ALLOCATIONS_MAX 50
+
+uintptr_t g_AllocatedMemory[ALLOCATIONS_MAX]  = {0};
+size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
+size_t g_AllocCnt = 0;
+
+/**
+ * loguju:
+ * 1. pamat sa alokovala
+ * 2. velkost alokovanej pamate
+ */
+void * MallocDebug_malloc (size_t size) {
+    if (g_AllocCnt >= ALLOCATIONS_MAX) {
+        puts("Maximum allocations reached, not allocating anything.");
+        return NULL;
+    }    
+    
+    void * ptr = g_OrigMalloc(size);
+    g_AllocatedMemory[g_AllocCnt++] = (uintptr_t) ptr;
+    g_AllocatedMemorySize[g_AllocCnt++] = size;
+
+    printf("Allocated %zu bytes @%p\n", size, ptr);
+    return ptr;
+}
+
+/**
+ * Budou záznam [alokace] rušit
+ * stěžovat si, pokud by měly zrušit neznámou,
+ * nebo uz dříve zrušenou alokaci
+ */
+void MallocDebug_free (void * ptr) {    
+    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
+        if (g_AllocatedMemory[i] == (uintptr_t) ptr) {
+            g_AllocatedMemory[i] = 0;
+            --g_AllocCnt;
+            g_OrigFree(ptr);
+            printf("Freed memory @%p\n", ptr);
+            return;
+        }
+    }
+
+    puts("Requested memory isn't allocated - already freed or never allocated.");
+    return;
+}
+
+void MallocDebug_calloc (void) {}
+void MallocDebug_realloc (void) {}
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
  * a free a změní jejich adresu na adresy substitučních funkcí
@@ -129,7 +176,7 @@ BOOL MallocDebug_Init (void) {
     // g_OrigRealloc = &realloc;
     g_OrigFree    = &free;
 
-    if ( ! replaceFunc("malloc", &g_OrigMalloc, &MallocDebug_malloc)) {
+    if ( ! replaceFunc("malloc", (ULONGLONG) g_OrigMalloc, (ULONGLONG) MallocDebug_malloc)) {
         puts("Replacing malloc failed.");
         return FALSE;
     }
@@ -141,17 +188,18 @@ BOOL MallocDebug_Init (void) {
     //     puts("Replacing realloc failed.");
     //     return FALSE;
     // }
-    if ( ! replaceFunc("free", &g_OrigFree, &MallocDebug_free) ) {
+    // todo: replace ULL with something more proper
+    if ( ! replaceFunc("free", (ULONGLONG) g_OrigFree, (ULONGLONG) MallocDebug_free) ) {
         puts("Replacing free failed.");
         return FALSE;
     }
+    puts("+++++++++++++++++++++++++++++++++++++++");
+    puts("revgrind init");
+    puts("+++++++++++++++++++++++++++++++++++++++");
+    assert (g_OrigMalloc != &malloc);
     return TRUE;
 }
 
-#define ALLOCATIONS_MAX 50
-size_t g_AllocatedMemory[ALLOCATIONS_MAX]     = {0};
-size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
-size_t g_AllocCnt = 0;
 
 /**
  * Vrátí IAT do původního stavu a vypíše případné zbytky tabulky,
@@ -171,54 +219,17 @@ void MallocDebug_Done (void) {
         puts("Memory leaks detected.");
         for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
             if (g_AllocatedMemorySize[i] != 0) {
-                printf("Leaked %d bytes @%p\n", g_AllocatedMemorySize[i], g_AllocatedMemory[i]);
+                printf("Leaked %zu bytes @%llu\n", g_AllocatedMemorySize[i], g_AllocatedMemory[i]);
             }
         }
+    }
+    else {
+        puts("No memory leaked.");
     }
     puts("Original function addresses restored.");
 }
 
-/**
- * loguju:
- * 1. pamat sa alokovala
- * 2. velkost alokovanej pamate
- */
-void * MallocDebug_malloc (size_t size) {
-    if (g_AllocCnt >= ALLOCATIONS_MAX) {
-        puts("Maximum allocations reached, not allocating anything.");
-        return;
-    }    
-    
-    void * ptr = g_OrigMalloc(size);
-    g_AllocatedMemory[g_AllocCnt++] = ptr;
-    g_AllocatedMemorySize[g_AllocCnt++] = size;
 
-    printf("Allocated %zu bytes @%p\n", size, ptr);
-    return ptr;
-}
-
-void MallocDebug_calloc (void) {}
-void MallocDebug_realloc (void) {}
-
-/**
- * Budou záznam [alokace] rušit
- * stěžovat si, pokud by měly zrušit neznámou,
- * nebo uz dříve zrušenou alokaci
- */
-void MallocDebug_free (void * ptr) {    
-    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
-        if (g_AllocatedMemory[i] == ptr) {
-            g_AllocatedMemory[i] = 0;
-            --g_AllocCnt;
-            g_OrigFree(ptr);
-            printf("Freed memory @%p\n", ptr);
-            return;
-        }
-    }
-
-    puts("Requested memory isn't allocated - already freed or never allocated.");
-    return;
-}
 
 void printFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
 {
@@ -370,8 +381,9 @@ void printStuff (void) {
     free(ptr);
 }
 
-int main (void) {
+int main (void) {  
     if ( ! MallocDebug_Init() ) {
+        puts("Init failed.");
         return 1;
     }
     return 0;
