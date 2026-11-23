@@ -149,10 +149,51 @@ void MallocDebug_free (void * ptr) {
 }
 
 void MallocDebug_calloc (void) {
-    puts("nada");
+    puts("calloc called");
+
+
 }
-void MallocDebug_realloc (void) {
-    puts("nada");
+
+
+/**
+realloc returns a void pointer to the reallocated (and possibly moved) memory block.
+
+If there isn't enough available memory to expand the block to the given size,
+the original block is left unchanged, and NULL is returned.
+
+If size is zero, then the block pointed to by memblock is freed; the return value is NULL,
+and memblock is left pointing at a freed block.
+
+The return value points to a storage space that is suitably aligned for storage of any type of object.
+To get a pointer to a type other than void, use a type cast on the return value.* 
+*/
+void * MallocDebug_realloc (void * memblock, size_t size) {
+    puts("realloc called");
+
+    // allow reallocation (enlargmenet of an existing array) when max allocations have been reached,
+    // but do not allow surpassing the max allocations amount
+    if (g_AllocCnt >= ALLOCATIONS_MAX && memblock == NULL) {
+        printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
+        return NULL;
+    }
+    if (size == 0) {
+        MallocDebug_free(memblock);
+        return NULL;
+    }
+    
+    void * newMem = g_OrigMalloc(size);
+    if (newMem == NULL) {
+        puts ("Not enough space on the heap for new allocations.");
+        return NULL;
+    }
+    if (memblock)
+        memcpy_s(newMem, size, memblock, _msize(memblock));
+    g_AllocatedMemory[g_AllocCnt] = (uintptr_t) newMem;
+    g_AllocatedMemorySize[g_AllocCnt++] = size;
+
+    if (memblock)
+        MallocDebug_free(memblock);
+    return newMem;
 }
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
@@ -337,15 +378,91 @@ int printOGFirstThunks (PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR p
     return 0;
 }
 
-int main (void) {  
+void printArr (int * arr, size_t size) {
+    for (int i = 0; i < size; ++i)
+        printf("%d ", arr[i]);
+    printf("\n");
+}
+
+int testReallocFree (void) {  
     if ( ! MallocDebug_Init() ) {
         puts("Init failed.");
+        return 0;
     }
-    void * ptr = malloc(9);
-    void * ptr2 = calloc(9, sizeof(BYTE)); // 9x 1B
-    void * ptr3 = realloc(ptr, 10);
+    
+    const int arrSize = 4;
+    int * buf = (int *) malloc(arrSize * sizeof(int));
 
-    free(ptr);
+    printf("buf size: %zu\n", _msize (buf));
+    for (int i = 0; i < arrSize; ++i)
+        buf[i] = i;
+    printArr(buf, arrSize);
+    
+    const int newArrSize = 0;
+    int * oldbuf = buf;
+    buf = (int *) realloc(buf, newArrSize * sizeof(int));
+    if ( buf != NULL) {
+        MallocDebug_Done();
+        return 0;
+    }
     MallocDebug_Done();
-    return 0;
+    return 1;
+}
+
+int testRealloc (void) {  
+    if ( ! MallocDebug_Init() ) {
+        puts("Init failed.");
+        return 0;
+    }
+    
+    const int arrSize = 4;
+    int * buf = (int *) malloc(arrSize * sizeof(int));
+
+    printf("buf size: %zu\n", _msize (buf));
+    for (int i = 0; i < arrSize; ++i)
+        buf[i] = i;
+    printArr(buf, arrSize);
+    
+    const int newArrSize = 2 * arrSize;
+    int * oldbuf = buf;    
+    buf = (int *) realloc(buf, newArrSize * sizeof(int));
+
+    printf("buf newsize: %zu\n", _msize (buf));
+    for (int i = arrSize; i < newArrSize; ++i)
+        buf[i] = i;
+    printArr(buf, newArrSize);
+    
+    printf("buf == oldbuf: %d\n", buf == oldbuf);
+    
+    free(buf);
+
+    MallocDebug_Done();
+    return 1;
+}
+
+int testReallocNew (void) {
+    if ( ! MallocDebug_Init() ) {
+        puts("Init failed.");
+        return 0;
+    }    
+    
+    const int size = 2;
+    int * buf = NULL;
+    buf = (int *) realloc(buf, size * sizeof(int));
+    
+    for (int i = 0; i < size; ++i)
+        buf[i] = i;    
+    printArr(buf, size);
+
+    free(buf);
+
+    MallocDebug_Done();
+    return 1;
+}
+
+int main (void) {  
+    // void * ptr2 = calloc(9, sizeof(BYTE)); // 9x 1B
+    if ( ! testReallocNew() )
+        return EXIT_FAILURE;
+    return EXIT_SUCCESS;
 }
