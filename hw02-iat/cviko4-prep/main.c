@@ -12,6 +12,19 @@
 // compile and run in powershell version that doesn't support && operator :))
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
+/*
+QUESTIONS:
+1. na co naraza toto?
+    Při zpracování importního adresáře nemusíte řešit jiný obsah importního thunku než odkaz na IMAGE_IMPORT_BY_NAME,
+    ale jinak musíte zpracovat libovolný, i poškozený, importní adresář. Upozornit, že adresář je vadný,
+    a ukončit program je legitimní, spadnout na neplatný přístup do paměti tam,
+    kde jste to mohli zpracováním dle specifikace ošetřit, nikoliv.
+2. ako odtestovat toto?
+    Je naprosto přípustné, aby program importoval stejnou knihovnu – a klidně i stejnou funkci z ní – několikrát.
+    Vaše řešení by s tím mělo počítat.
+3. 
+*/
+
 #define hBEGIN ((BYTE*)pDosHeader)
 
 // convert relative virtual address to virtual address (absolute address in memory)
@@ -145,7 +158,6 @@ void MallocDebug_free (void * ptr) {
     }
 
     printf("Requested memory @(%p) isn't allocated\n- already freed or never allocated within revgrind init & done block.\n", ptr);
-    return;
 }
 /**
  * @brief Allocates an array in memory with elements initialized to 0.
@@ -155,8 +167,6 @@ void MallocDebug_free (void * ptr) {
  * @return void* pointer to allocated space
  */
 void * MallocDebug_calloc (size_t number, size_t size) {
-    puts("calloc called");
-
     if (g_AllocCnt >= ALLOCATIONS_MAX) {
         printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
         return NULL;
@@ -187,8 +197,6 @@ The return value points to a storage space that is suitably aligned for storage 
 To get a pointer to a type other than void, use a type cast on the return value.* 
 */
 void * MallocDebug_realloc (void * memblock, size_t size) {
-    puts("realloc called");
-
     // allow reallocation (enlargmenet of an existing array) when max allocations have been reached,
     // but do not allow surpassing the max allocations amount
     if (g_AllocCnt >= ALLOCATIONS_MAX && memblock == NULL) {
@@ -261,33 +269,42 @@ BOOL MallocDebug_Init (void) {
  * které budou považovány za memory leaky :)
  */
 void MallocDebug_Done (void) {
-    puts("---------------------------------------");
-    puts("revgrind done");
-    puts("---------------------------------------");
     if (g_OrigMalloc == NULL) {
         puts("Done called but revgrind hasn't been initialised.");
         return;
     }
     
     // restore original IAT state
-    // replace malloc (now Debug_malloc) with gOrigMalloc (malloc)
+    // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
     replaceFunc("malloc", (ULONGLONG) &malloc, (ULONGLONG) g_OrigMalloc);
+    g_OrigMalloc = NULL;
     replaceFunc("calloc", (ULONGLONG) &calloc, (ULONGLONG) g_OrigCalloc);
+    g_OrigCalloc = NULL;
     replaceFunc("realloc", (ULONGLONG) &realloc, (ULONGLONG) g_OrigRealloc);
+    g_OrigRealloc = NULL;
+    replaceFunc("free", (ULONGLONG) &free, (ULONGLONG) g_OrigFree);
+    g_OrigFree = NULL;
     puts("Original IAT restored.");
 
     // print memory leaks
-    if (g_AllocCnt == 0) {
-        puts("No memory leaked.");
-        return;
-    }
-
-    puts("Memory leaks:");
-    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
-        if (g_AllocatedMemorySize[i] != 0) {
-            printf("\tLeaked %zu bytes @%p\n", g_AllocatedMemorySize[i], (void *) g_AllocatedMemory[i]);
+    if (g_AllocCnt != 0) {
+        puts("Memory leaks:");
+        for (size_t i = 0; i < ALLOCATIONS_MAX; ++i) {
+            if (g_AllocatedMemorySize[i] != 0) {
+                printf("\tLeaked %zu bytes @%p\n", g_AllocatedMemorySize[i], (void *) g_AllocatedMemory[i]);
+            }
         }
     }
+    else {
+        puts("No memory leaked.");        
+    }
+    // todo not sure if i want to clean this up?
+    // zero g_AllocatedMemory
+    // zero g_AllocatedMemorySize
+    // g_AllocCnt = 0;
+    puts("---------------------------------------");
+    puts("revgrind done");
+    puts("---------------------------------------");
 }
 
 
@@ -515,9 +532,8 @@ int testCallocLeak(void) {
     return 1;
 }
 
-int main (void) {  
+int main (void) {
+    assert (testCallocLeak() == 1);
     assert (testCallocNormal() == 1);
-
-
     return EXIT_SUCCESS;
 }
