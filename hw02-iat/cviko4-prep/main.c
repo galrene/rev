@@ -176,7 +176,7 @@ void * MallocDebug_realloc (void * memblock, size_t size) {
         printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
         return NULL;
     }
-    if (size == 0) {
+    if (size <= 0) {
         MallocDebug_free(memblock);
         return NULL;
     }
@@ -186,8 +186,10 @@ void * MallocDebug_realloc (void * memblock, size_t size) {
         puts ("Not enough space on the heap for new allocations.");
         return NULL;
     }
-    if (memblock)
-        memcpy_s(newMem, size, memblock, _msize(memblock));
+    if (memblock) {
+        // if new requested size < current size then copy only what fits now
+        memcpy_s(newMem, size, memblock, min(size, _msize(memblock)));
+    }
     g_AllocatedMemory[g_AllocCnt] = (uintptr_t) newMem;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
