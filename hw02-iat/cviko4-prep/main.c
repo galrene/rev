@@ -147,11 +147,30 @@ void MallocDebug_free (void * ptr) {
     printf("Requested memory @(%p) isn't allocated\n- already freed or never allocated within revgrind init & done block.\n", ptr);
     return;
 }
-
-void MallocDebug_calloc (void) {
+/**
+ * @brief Allocates an array in memory with elements initialized to 0.
+ * 
+ * @param number number of elements
+ * @param size length in bytes of each element
+ * @return void* pointer to allocated space
+ */
+void * MallocDebug_calloc (size_t number, size_t size) {
     puts("calloc called");
 
+    if (g_AllocCnt >= ALLOCATIONS_MAX) {
+        printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
+        return NULL;
+    }
 
+    if (size <= 0 || number <= 0)
+        return NULL; // in microsoft implementation this would actually be undefined behavior
+
+    void * buf = g_OrigMalloc(number * size);
+    g_AllocatedMemory[g_AllocCnt] = (uintptr_t) buf;
+    g_AllocatedMemorySize[g_AllocCnt++] = size;
+
+    memset(buf, 0, number * size);
+    return buf;
 }
 
 
@@ -462,9 +481,43 @@ int testReallocNew (void) {
     return 1;
 }
 
+int testCallocNormal(void) {
+    if ( ! MallocDebug_Init() ) {
+        puts("Init failed.");
+        return 0;
+    } 
+    
+    const int size = 9;
+    int * buf = calloc(size, sizeof(int));
+    
+    printArr(buf, size);
+
+    for (size_t i = 0; i < size; ++i)
+        buf[i] = i;
+    printArr(buf, size);
+    
+    free(buf);
+    MallocDebug_Done();
+    return 1;
+}
+
+int testCallocLeak(void) {
+    if ( ! MallocDebug_Init() ) {
+        puts("Init failed.");
+        return 0;
+    } 
+    
+    const int size = 9;
+    int * buf = calloc(size, sizeof(int));
+
+    printArr(buf, size);
+    MallocDebug_Done();
+    return 1;
+}
+
 int main (void) {  
-    // void * ptr2 = calloc(9, sizeof(BYTE)); // 9x 1B
-    if ( ! testReallocNew() )
-        return EXIT_FAILURE;
+    assert (testCallocNormal() == 1);
+
+
     return EXIT_SUCCESS;
 }
