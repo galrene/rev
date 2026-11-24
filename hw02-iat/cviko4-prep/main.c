@@ -56,6 +56,9 @@ BOOL patchFirstThunk (PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pF
     pFirstThunk->u1.Function = newAddr;
     return TRUE;
 }
+
+#define UNLOCK_FAILED -1
+
 /**
  * @brief Find the func's address in FirstThunk, replace with newAddr. Can by retrieved by ordinal as well (TODO).
  * @param pImportDesc import descriptor containing function addresses to be patched
@@ -76,7 +79,7 @@ int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, 
         if (funcAddr == pFirstThunk->u1.Function)
         {
             if (! patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
-                return -1;
+                return UNLOCK_FAILED;
             patchedCnt++;
             // printf("------>%lld", newAddr);
         }
@@ -117,8 +120,8 @@ int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
             {
                 // .dll contains searched function, patch all FirstThunks matching its address
                 int ret = patchThunksOfFunc(pImportDesc, funcAddr, newAddr);
-                if (ret == -1)
-                    return -1;
+                if (ret == UNLOCK_FAILED)
+                    return UNLOCK_FAILED;
                 patchedCnt += ret;
             }
         }
@@ -131,7 +134,7 @@ int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
 BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
 {
     int r = patchThunks(funcName, funcAddr, pNewFunc);
-    if (r == -1)
+    if (r == UNLOCK_FAILED)
         return FALSE;
     if (r == 0) {
         puts("No FirstThunks patched.");
