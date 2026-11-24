@@ -12,8 +12,6 @@
 // compile and run in powershell version that doesn't support && operator :))
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
-#define hBEGIN ((BYTE *)pDosHeader)
-
 // convert relative virtual address to virtual address (absolute address in memory)
 static void *VA(DWORD rva)
 {
@@ -28,7 +26,7 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
 
     // 1 import descriptor per imported DLL
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)(hBEGIN + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)(((BYTE *)pDosHeader) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
     return pImportDesc;
 }
 
@@ -382,120 +380,6 @@ BOOL MallocDebug_Done(void)
     puts("revgrind done");
     puts("---------------------------------------");
     return TRUE;
-}
-
-void printFirstThunks(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
-{
-    // PIMAGE_THUNK_DATA arr is 0-terminated
-    for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA)(hBEGIN + pImportDesc->FirstThunk);
-         pFirstThunk->u1.AddressOfData != 0; ++pFirstThunk)
-    {
-        // check if address of data is ordinal
-        // a teda ci pFirstThunk->u1.Function je typu PIMAGE_THUNK_DATA
-        void *pImportByName;
-        if (isOrdinalThunk(pFirstThunk))
-        {
-            pImportByName = (PIMAGE_THUNK_DATA)(hBEGIN + pFirstThunk->u1.Function);
-            // pImportByName is now PIMAGE_THUNK_DATA
-            printf("Found an ordinal, won't have a name!\n");
-            continue;
-        }
-        else
-        {
-            pImportByName = (PIMAGE_IMPORT_BY_NAME)(hBEGIN + pFirstThunk->u1.Function);
-            // pImportByName is now PIMAGE_IMPORT_BY_NAME
-        }
-        if ((ULONG_PTR)&malloc == pFirstThunk->u1.Function)
-        {
-
-            printf("\t pFirstThunk->u1.Function:\t\t%p\n", (void *)pFirstThunk->u1.Function);
-            printf("\t &malloc:\t\t\t\t%p\n", (void *)&malloc);
-            printf("\t &MallocDebug_malloc:\t\t\t%p\n", (void *)&MallocDebug_malloc);
-
-            puts("Found malloc.");
-
-            if (UnlockFirstThunk(pImportDesc) == 0)
-            {
-                DWORD r = GetLastError();
-                printf("VirtualProtect failed.\n Error: %d\n", r);
-                return;
-            }
-            puts("Unlocked it's IAT for writing.\n");
-
-            pFirstThunk->u1.Function = (ULONGLONG)&MallocDebug_malloc;
-
-            puts("Replaced malloc with MallocDebug_malloc.\n");
-
-            puts("Calling malloc, should run MallocDebug:");
-
-            int *ptr = malloc(5);
-        }
-    }
-}
-
-// When MSB of AddressOfData is 1, it's an ordinal and
-// pFirstThunk->u1.AddressOfData is of type PIMAGE_THUNK_DATA.
-
-BOOL isOrdinalThunk(PIMAGE_THUNK_DATA pThunk)
-{
-    return IMAGE_SNAP_BY_ORDINAL(pThunk->u1.Ordinal) ? TRUE : FALSE;
-}
-
-int printOGFirstThunks(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
-{
-    char *libName = (hBEGIN + pImportDesc->Name);
-    // if (strncmp(libName, "api-ms-win-crt-heap-l1-1-0.dll", 30) != 0)
-    // return;
-    // printf("OriginalFirstThunks: \n");
-    printf("Library name: %s\n", libName);
-    // timedatestamp will be non-zero if imports are bound
-    printf("Import bound? ");
-    printf(pImportDesc->TimeDateStamp != 0UL ? "Yes\n" : "No\n");
-
-    int cnt = 0;
-    printf("Found linked functions:\n");
-    // PIMAGE_THUNK_DATA arr is 0-terminated
-    for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA)(hBEGIN + pImportDesc->OriginalFirstThunk);
-         pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
-    {
-        // check if address of data is ordinal
-        // a teda ci pFirstThunk->u1.AddressOfData je typu PIMAGE_THUNK_DATA
-        void *pImportByName;
-        if (isOrdinalThunk(pOriginalFirstThunk))
-        {
-            pImportByName = (PIMAGE_THUNK_DATA)(hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
-            // pImportByName is now PIMAGE_THUNK_DATA
-            printf("Found an ordinal, won't have a name!\n");
-            continue;
-        }
-        else
-        {
-            pImportByName = (PIMAGE_IMPORT_BY_NAME)(hBEGIN + pOriginalFirstThunk->u1.AddressOfData);
-            // pImportByName is now PIMAGE_IMPORT_BY_NAME
-        }
-
-        char buf[64] = {0};
-        if (strcpy_s(buf, 64, ((PIMAGE_IMPORT_BY_NAME)pImportByName)->Name) == 0)
-        {
-            printf("\t- %s\n", buf);
-            if (strncmp("malloc", buf, 6) == 0)
-            {
-                // printf("\t# Found malloc!\n");
-                printf("\t# malloc's hint: %d\n", ((PIMAGE_IMPORT_BY_NAME)pImportByName)->Hint);
-                return 1;
-                // pImportByName = (PIMAGE_IMPORT_BY_NAME) (hBEGIN + pFirstThunk->u1.AddressOfData);
-                // printFirstThunks(pDosHeader, pImportDesc, pImportByName);
-                // IAT of heap dll: program_offset + 303C
-            }
-            ++cnt;
-        }
-        else
-        {
-            printf("Copying to buffer failed.\n");
-        }
-    }
-    printf("Found %d linked functions in %s.\n", cnt, libName);
-    return 0;
 }
 
 void printArr(int *arr, size_t size)
