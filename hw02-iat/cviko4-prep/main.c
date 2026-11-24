@@ -32,25 +32,6 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     return pImportDesc;
 }
 
-PIMAGE_IMPORT_DESCRIPTOR findImpDescOfFunc(char *funcName)
-{
-    for (PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
-         pImportDesc->Characteristics != 0; ++pImportDesc)
-    {
-        for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk));
-             pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
-        {
-            PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(VA(pOriginalFirstThunk->u1.AddressOfData));
-
-            if (strncmp("malloc", pImportByName->Name, 6) == 0)
-            {
-                return pImportDesc;
-            }
-        }
-    }
-    return NULL;
-}
-
 static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
 {
     PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImp->FirstThunk));
@@ -64,36 +45,99 @@ static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
 }
 
-/* look up import descriptor by Name using funcName. Then find it in it's IAT by funcAddr, replace address with pNewFunc  */
-BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
+BOOL patchFirstThunk (PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONGLONG newAddr)
 {
-    // find import descriptor of funcName's .dll
-    PIMAGE_IMPORT_DESCRIPTOR funcImpDesc = findImpDescOfFunc(funcName);
-    if (funcImpDesc == NULL)
+    if (UnlockFirstThunk(pImportDesc) == 0)
     {
-        printf("No Import Descriptor containing function %s found\n", funcName);
+        DWORD r = GetLastError();
+        printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
         return FALSE;
     }
-
-    // find the func's address in FirstThunk, replace with pNewFunc
-    //    - alebo ju viem retrievnut aj podla poradia/inak dajak?
-    for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA)(VA(funcImpDesc->FirstThunk));
-         pFirstThunk->u1.AddressOfData != 0; ++pFirstThunk)
+    pFirstThunk->u1.Function = newAddr;
+    return TRUE;
+}
+/**
+ * @brief Find the func's address in FirstThunk, replace with newAddr. Can by retrieved by ordinal as well (TODO).
+ * @param pImportDesc import descriptor containing function addresses to be patched
+ * @param funcAddr adddress of function to patch
+ * @param newAddr address pointed to by original function after patching
+ * @return int number of patched FirstThunks or -1 on error
+ */
+int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, ULONGLONG newAddr)
+{
+    unsigned int patchedCnt = 0;
+    // int i = 1;
+    // puts("Thunk BEGIN");
+    // printf("Searched address: %lld\n", funcAddr);
+    for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
+        pFirstThunk->u1.Function != 0ULL; ++pFirstThunk)
     {
+        // printf("%d. %lld", i, pFirstThunk->u1.Function);
         if (funcAddr == pFirstThunk->u1.Function)
         {
-            if (UnlockFirstThunk(funcImpDesc) == 0)
+            if (! patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
+                return -1;
+            patchedCnt++;
+            // printf("------>%lld", newAddr);
+        }
+        // puts("");
+        // ++i;
+    }
+    // puts("Thunk END");
+    return patchedCnt;
+}
+
+/**
+ * @brief Find all PIMAGE_IMPORT_DESCRIPTORs importing a function of given name and patch
+ * their FirstThunks (found by address), using newAddr address.
+ * 
+ * 
+ * Each imported .dll is represented by a single IMAGE_IMPORT_DESCRIPTOR.
+ * Each FirstThunk points to a segment of IAT belonging to given .dll
+ * 
+ * @param funcName name of searched function
+ * @param funcImpDescs (out param) pointer to an arry of PIMAGE_IMPORT_DESCRIPTORs 
+ * @param importedDuplicatesMax length of funcImpDescs array
+ * @return int number of found import descriptiors
+ */
+int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
+{
+    unsigned int patchedCnt = 0;
+    // iterate dlls
+    for (PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
+         pImportDesc->Characteristics != 0; ++pImportDesc)
+    {
+        // iterate dll's imported functions
+        for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk));
+             pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
+        {
+            PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(VA(pOriginalFirstThunk->u1.AddressOfData));
+            // find searched function by name
+            if (strncmp(funcName, pImportByName->Name, 6) == 0)
             {
-                DWORD r = GetLastError();
-                printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
-                return FALSE;
+                // .dll contains searched function, patch all FirstThunks matching its address
+                int ret = patchThunksOfFunc(pImportDesc, funcAddr, newAddr);
+                if (ret == -1)
+                    return -1;
+                patchedCnt += ret;
             }
-            pFirstThunk->u1.Function = pNewFunc;
-            return TRUE;
         }
     }
-    printf("%s address not found in FirstThunk.\n", funcName);
-    return FALSE;
+    return patchedCnt;
+}
+
+
+
+BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
+{
+    int r = patchThunks(funcName, funcAddr, pNewFunc);
+    if (r == -1)
+        return FALSE;
+    if (r == 0) {
+        puts("No FirstThunks patched.");
+        return FALSE;
+    }
+    return TRUE;
 }
 
 // function pointer declaration
@@ -245,22 +289,22 @@ BOOL MallocDebug_Init(void)
     // todo: replace ULL with something more proper
     if (!replaceFunc("malloc", (ULONGLONG)g_OrigMalloc, (ULONGLONG)MallocDebug_malloc))
     {
-        puts("Replacing malloc failed.");
+        puts("Patching malloc failed.");
         return FALSE;
     }
     if (!replaceFunc("calloc", (ULONGLONG)g_OrigCalloc, (ULONGLONG)MallocDebug_calloc))
     {
-        puts("Replacing calloc failed.");
+        puts("Patching calloc failed.");
         return FALSE;
     }
     if (!replaceFunc("realloc", (ULONGLONG)g_OrigRealloc, (ULONGLONG)MallocDebug_realloc))
     {
-        puts("Replacing realloc failed.");
+        puts("Patching realloc failed.");
         return FALSE;
     }
     if (!replaceFunc("free", (ULONGLONG)g_OrigFree, (ULONGLONG)MallocDebug_free))
     {
-        puts("Replacing free failed.");
+        puts("Patching free failed.");
         return FALSE;
     }
     puts("+++++++++++++++++++++++++++++++++++++++");
@@ -274,24 +318,41 @@ BOOL MallocDebug_Init(void)
  * Vrátí IAT do původního stavu a vypíše případné zbytky tabulky,
  * které budou považovány za memory leaky :)
  */
-void MallocDebug_Done(void)
+BOOL MallocDebug_Done(void)
 {
     if (g_OrigMalloc == NULL)
     {
         puts("Done called but revgrind hasn't been initialised.");
-        return;
+        return FALSE;
     }
 
     // restore original IAT state
     // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
-    replaceFunc("malloc", (ULONGLONG)&malloc, (ULONGLONG)g_OrigMalloc);
+    if (!replaceFunc("malloc", (ULONGLONG)malloc, (ULONGLONG)g_OrigMalloc))
+    {
+        puts("Restoring malloc failed.");
+        return FALSE;
+    }
     g_OrigMalloc = NULL;
-    replaceFunc("calloc", (ULONGLONG)&calloc, (ULONGLONG)g_OrigCalloc);
+    if (!replaceFunc("calloc", (ULONGLONG)calloc, (ULONGLONG)g_OrigCalloc))
+    {
+        puts("Restoring calloc failed.");
+        return FALSE;
+    }
     g_OrigCalloc = NULL;
-    replaceFunc("realloc", (ULONGLONG)&realloc, (ULONGLONG)g_OrigRealloc);
+    if (!replaceFunc("realloc", (ULONGLONG)realloc, (ULONGLONG)g_OrigRealloc))
+    {
+        puts("Restoring realloc failed.");
+        return FALSE;
+    }
     g_OrigRealloc = NULL;
-    replaceFunc("free", (ULONGLONG)&free, (ULONGLONG)g_OrigFree);
+    if (!replaceFunc("free", (ULONGLONG)free, (ULONGLONG)g_OrigFree))
+    {
+        puts("Restoring free failed.");
+        return FALSE;
+    }
     g_OrigFree = NULL;
+    
     puts("Original IAT restored.");
 
     // print memory leaks
@@ -317,6 +378,7 @@ void MallocDebug_Done(void)
     puts("---------------------------------------");
     puts("revgrind done");
     puts("---------------------------------------");
+    return TRUE;
 }
 
 void printFirstThunks(PIMAGE_DOS_HEADER pDosHeader, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
@@ -451,7 +513,8 @@ int testReallocFree(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
-    printf("buf size: %zu\n", _msize(buf));
+    assert (_msize(buf) == arrSize * sizeof(int));
+    
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
     printArr(buf, arrSize);
@@ -461,10 +524,12 @@ int testReallocFree(void)
     buf = (int *)realloc(buf, newArrSize * sizeof(int));
     if (buf != NULL)
     {
-        MallocDebug_Done();
+        if ( ! MallocDebug_Done() )
+            return 0;
         return 0;
     }
-    MallocDebug_Done();
+    if ( ! MallocDebug_Done() )
+        return 0;
     return 1;
 }
 
@@ -479,6 +544,7 @@ int testRealloc(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
+    assert (_msize(buf) == arrSize * sizeof(int));
     printf("buf size: %zu\n", _msize(buf));
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -488,16 +554,18 @@ int testRealloc(void)
     int *oldbuf = buf;
     buf = (int *)realloc(buf, newArrSize * sizeof(int));
 
+    assert (_msize(buf) == newArrSize * sizeof(int));
     printf("buf newsize: %zu\n", _msize(buf));
     for (int i = arrSize; i < newArrSize; ++i)
         buf[i] = i;
     printArr(buf, newArrSize);
 
-    printf("buf == oldbuf: %d\n", buf == oldbuf);
+    assert (oldbuf != buf);
 
     free(buf);
 
-    MallocDebug_Done();
+    if ( ! MallocDebug_Done() )
+        return 0;
     return 1;
 }
 
@@ -513,13 +581,16 @@ int testReallocNew(void)
     int *buf = NULL;
     buf = (int *)realloc(buf, size * sizeof(int));
 
+    assert (_msize(buf) == size * sizeof(int));
+
     for (int i = 0; i < size; ++i)
         buf[i] = i;
     printArr(buf, size);
 
     free(buf);
 
-    MallocDebug_Done();
+    if ( ! MallocDebug_Done() )
+        return 0;
     return 1;
 }
 
@@ -534,6 +605,8 @@ int testCallocNormal(void)
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
 
+    assert (_msize(buf) == size * sizeof(int));
+
     printArr(buf, size);
 
     for (size_t i = 0; i < size; ++i)
@@ -541,7 +614,8 @@ int testCallocNormal(void)
     printArr(buf, size);
 
     free(buf);
-    MallocDebug_Done();
+    if ( ! MallocDebug_Done() )
+        return 0;
     return 1;
 }
 
@@ -552,18 +626,23 @@ int testCallocLeak(void)
         puts("Init failed.");
         return 0;
     }
-
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
 
+    assert (_msize(buf) == size * sizeof(int));
+
     printArr(buf, size);
-    MallocDebug_Done();
+    if ( ! MallocDebug_Done() )
+        return 0;
     return 1;
 }
 
 int main(void)
 {
-    assert(testCallocLeak() == 1);
+    assert(testRealloc() == 1);
+    assert(testReallocNew() == 1);
+    assert(testReallocFree() == 1);
     assert(testCallocNormal() == 1);
+    assert(testCallocLeak() == 1);
     return EXIT_SUCCESS;
 }
