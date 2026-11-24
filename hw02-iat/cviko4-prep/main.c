@@ -12,6 +12,20 @@
 // compile and run in powershell version that doesn't support && operator :))
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
+/**
+PRISTUP
+=======
+Najdem img import descriptor (.dll) cez meno (v OGFirstThunkoch)
+potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
+
+VYLEPSENIA
+==========
+1. Ries ordinal imports
+2. Zamykaj IAT po prepisani
+
+*/
+
+
 // convert relative virtual address to virtual address (absolute address in memory)
 static void *VA(DWORD rva)
 {
