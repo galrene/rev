@@ -291,15 +291,15 @@ void *MallocDebug_realloc(void *memblock, size_t size)
 /**
  * @brief Iterate OFT & FT in parallel, return funcAddr fetched by name in OFT.
  *
- * @param funcName
+ * @param funcName name of searched functions
  * @param len function name length in chars without \0
- * @return void*
+ * @return function addr or 0 when not found or when PE malformed.
  */
 ULONG_PTR getFuncAddr(char *funcName)
 {
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
     // iterate import descriptors (dlls)
-    for (; pImportDesc->Characteristics != 0; ++pImportDesc)
+    for (; pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
         // import address table (IAT)
         PIMAGE_THUNK_DATA iat = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
@@ -307,22 +307,23 @@ ULONG_PTR getFuncAddr(char *funcName)
         PIMAGE_THUNK_DATA nt = pImportDesc->OriginalFirstThunk
                                    ? (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk))
                                    : NULL;
-        // iterate dlls
+        // no INT: only the address iat[i].u1.Function is available,
+        // continue with the next import descriptor
+        if (!nt)
+            continue; // no INT: names unavailable for this DLL
+
         for (size_t i = 0; iat[i].u1.Function != 0; i++)
         {
-            if (!nt)
-            {
-                // no INT: only the address iat[i].u1.Function is available
-                continue;
-            }
+
             if (nt[i].u1.AddressOfData == 0)
             {
                 puts("INT shorter than IAT: PE malformed. Stopping...");
-                break;
+                return 0;
             }
 
             if (IMAGE_SNAP_BY_ORDINAL(nt[i].u1.Ordinal))
             {
+                // ignore ordinal imports
                 // WORD ord = (WORD)IMAGE_ORDINAL(nt[i].u1.Ordinal);
                 // printf("#%u -> %p\n", ord, (void *)iat[i].u1.Function);
                 continue;
