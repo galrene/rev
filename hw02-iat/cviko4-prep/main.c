@@ -156,7 +156,7 @@ int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
         {
             PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(VA(pOriginalFirstThunk->u1.AddressOfData));
             // find searched function by name
-            if (strncmp(funcName, pImportByName->Name, 6) == 0)
+            if (strcmp(funcName, pImportByName->Name) == 0)
             {
                 // .dll contains searched function, patch all FirstThunks matching its address
                 int ret = patchThunksOfFunc(pImportDesc, funcAddr, newAddr);

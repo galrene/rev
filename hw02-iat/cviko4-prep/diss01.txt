@@ -27,7 +27,7 @@ zapisovatelná už sama o sobě, takže na chybě ve volání VirtualProtect
 nebude záležet.
 
 RID-102
-===============
+=======
 Bylo by vhodné, kdybyste se ve smyčce přes všechny import descriptory
 nespoléhal jen na prvek Characteristics, ale zahrnul do kontrol také
 velikost adresáře. Ano, mělo by to být v souladu, ale přesto byste měl
@@ -42,10 +42,16 @@ byste nahrazovat jen ty funkce, kde jednoznačně víte, co dělají - tzn.
 zahrnout do porovnání také jméno knihovny (které zde vystupuje jako něco
 jako namespace).
 
+RID-103 (FIXED)
+=======
 To, jak používáte strncmp ve funkci patchThunks, je jednoznačně špatně.
 I když třeba teď zrovna nevede na chyby, stejně je to špatně.
 Vysvětlete, v čem. [-1 b.]
+    TODO REPLY: ctrlc ctrlv chyba, zabudol som zmenit potom,
+    ako som testoval iba na mallocu. vymenene za strcmp ktore skonci na \0
 
+(OPTIONAL) RID-104
+=======
 Velmi nedoporučuju mít N polí pro různé typy dat (ukazatel na paměť,
 velikost paměti). Sice tak program bude fungovat, ale bude se to špatně
 upravovat, kdybyste potřeboval přidat další údaj (srovnejte s polem
