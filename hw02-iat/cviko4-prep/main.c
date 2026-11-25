@@ -17,12 +17,6 @@ PRISTUP
 =======
 Najdem img import descriptor (.dll) cez meno (v OGFirstThunkoch)
 potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
-
-VYLEPSENIA
-==========
-1. Ries ordinal imports
-2. Zamykaj IAT po prepisani
-
 */
 
 // convert relative virtual address to virtual address (absolute address in memory)
@@ -42,19 +36,6 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)(((BYTE *)pDosHeader) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
     return pImportDesc;
 }
-
-// static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
-// {
-//     PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImp->FirstThunk));
-
-//     SIZE_T count = 0;
-//     while (t[count].u1.Function != 0)
-//         count++;
-
-//     SIZE_T pBytes = count * sizeof(IMAGE_THUNK_DATA);
-//     DWORD pOldProt = 0;
-//     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
-// }
 
 BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
 {    
@@ -732,7 +713,7 @@ int testCallocNormal(void)
 
     printArr(buf, size);
 
-    for (size_t i = 0; i < size; ++i)
+    for (int i = 0; i < size; ++i)
         buf[i] = i;
     printArr(buf, size);
 
