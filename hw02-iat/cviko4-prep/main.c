@@ -257,34 +257,24 @@ To get a pointer to a type other than void, use a type cast on the return value.
 void *MallocDebug_realloc(void *memblock, size_t size)
 {
     // allow reallocation (enlargmenet of an existing array) when max allocations have been reached,
-    // but do not allow surpassing the max allocations amount
-    if (g_AllocCnt >= ALLOCATIONS_MAX && memblock == NULL)
+    // but do not allow allocating previously unalloced memory (thus surpassing the max allocations amount)
+    if (size >= 0 && g_AllocCnt >= ALLOCATIONS_MAX && memblock == NULL)
     {
         printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
         return NULL;
     }
-    if (size <= 0)
-    {
-        MallocDebug_free(memblock);
-        return NULL;
-    }
 
-    void *newMem = g_OrigMalloc(size);
+    void *newMem = g_OrigRealloc(memblock, size);
+
     if (newMem == NULL)
     {
         puts("Not enough space on the heap for new allocations.");
         return NULL;
     }
-    if (memblock)
-    {
-        // if new requested size < current size then copy only what fits now
-        memcpy_s(newMem, size, memblock, min(size, _msize(memblock)));
-    }
+
     g_AllocatedMemory[g_AllocCnt] = (uintptr_t)newMem;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
-    if (memblock)
-        MallocDebug_free(memblock);
     return newMem;
 }
 
