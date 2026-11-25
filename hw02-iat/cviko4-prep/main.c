@@ -230,15 +230,25 @@ void *MallocDebug_calloc(size_t number, size_t size)
         printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
         return NULL;
     }
+    /*
+    In the Microsoft implementation, if number or size is zero,
+    calloc returns a pointer to an allocated block of non-zero size.
+    An attempt to read or write through the returned pointer leads to undefined behavior.
+    */
+    if (size == 0 || number == 0)
+        puts("Calloc called with either of args equal to 0, read or write to returned mem is UB");
 
-    if (size <= 0 || number <= 0)
-        return NULL; // in microsoft implementation this would actually be undefined behavior
-
-    void *buf = g_OrigMalloc(number * size);
+    void *buf = g_OrigCalloc(number, size);
+    
+    if (buf == NULL)
+    {
+        puts("Not enough space on the heap for new allocations.");
+        return NULL;
+    }
+    
     g_AllocatedMemory[g_AllocCnt] = (uintptr_t)buf;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
-    memset(buf, 0, number * size);
     return buf;
 }
 
