@@ -544,7 +544,7 @@ int testReallocFree(void)
     }
 
     const int arrSize = 4;
-    int *buf = (int *)malloc(arrSize * sizeof(int));
+    int *buf = (int *)malloc(arrSize * sizeof(buf));
 
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -552,7 +552,7 @@ int testReallocFree(void)
 
     const int newArrSize = 0;
     int *tmp = NULL;
-    tmp = (int *)realloc(buf, newArrSize * sizeof(int));
+    tmp = (int *)realloc(buf, newArrSize * sizeof(tmp));
     if (tmp != NULL)
     {
         if (!MallocDebug_Done())
@@ -574,7 +574,7 @@ int testRealloc(void)
     }
 
     const int arrSize = 4;
-    int *buf = (int *)malloc(arrSize * sizeof(int));
+    int *buf = (int *)malloc(arrSize * sizeof(buf));
     
     assert (buf);
     
@@ -584,7 +584,7 @@ int testRealloc(void)
 
     const int newArrSize = 2 * arrSize;
     int *tmp = NULL;
-    tmp = (int *)realloc(buf, newArrSize * sizeof(int));
+    tmp = (int *)realloc(buf, newArrSize * sizeof(tmp));
     
     assert (tmp != NULL); // should free buf here if tmp == NULL (realloc failed)
     buf = tmp;
@@ -611,7 +611,7 @@ int testReallocNew(void)
 
     const int size = 2;
     int *buf = NULL;
-    buf = (int *)realloc(buf, size * sizeof(int));
+    buf = (int *)realloc(buf, size * sizeof(buf));
     
     assert (buf != NULL);
 
@@ -683,7 +683,7 @@ int testReallocZeroReallocAgain(void)
     puts("Reallocating 0 length buffer into a larger one");
     const int arrSize = 8;
     int * tmp = NULL;
-    tmp = (int *)realloc(buf, arrSize * sizeof(int));
+    tmp = (int *)realloc(buf, arrSize * sizeof(tmp));
     assert (tmp != NULL);
     buf = tmp;
     
@@ -708,7 +708,7 @@ int testCallocNormal(void)
     }
 
     const int size = 9;
-    int *buf = calloc(size, sizeof(int));
+    int *buf = calloc(size, sizeof(buf));
 
     printArr(buf, size);
 
@@ -731,7 +731,7 @@ int testCallocLeak(void)
         return 0;
     }
     const int size = 9;
-    int *buf = calloc(size, sizeof(int));
+    int *buf = calloc(size, sizeof(buf));
 
     printArr(buf, size);
     if (!MallocDebug_Done())

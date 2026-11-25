@@ -14,7 +14,7 @@ RID-116
 Voláte GetModuleHandle znovu a znovu pro každé volání VA(). Je to
 nezbytné? Plus jste rovnou mohl i řešit případ, že RVA==0.
 
-RID-117
+RID-117 (FIXED)
 =======
 Snažte se nepoužívat sizeof(typ), když sizeof(proměnná) udělá stejnou
 službu. Jsou případy, kdy je sizeof(typ) výhodnější, ale obvykle je to
@@ -212,6 +212,9 @@ závažná chyba v celé logice úlohy. [-3 b.]
 
 SELF-RIDS
 =========
+
+reply to RID-103
+say i dont understand RID-115
 
 RID-11
 ------
