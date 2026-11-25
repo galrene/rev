@@ -240,8 +240,7 @@ BOOL removeMem(void* memblock)
 void MallocDebug_free(void *ptr)
 {
     printf("Freeing memory @%p\n", ptr);
-    if (! removeMem(ptr))
-        exit(1);
+    removeMem(ptr);
     g_OrigFree(ptr);
 }
 /**
