@@ -58,9 +58,13 @@ upravovat, kdybyste potřeboval přidat další údaj (srovnejte s polem
 struktur) a je to pomalé kvůli práci s cache (až řádově pomalejší než
 pole struktur).
 
+(OPTIONAL) RID-105
+=======
 Test na g_AllocCnt >= ALLOCATIONS_MAX byste měl dělat až v okamžiku, kdy
 víte, že ho potřebujete.
 
+RID-106 (FIXED)
+=======
 Malloc může selhat. [-1 b.]
 
 Odstranění záznamu z logu funguje špatně, není konzistentní se
