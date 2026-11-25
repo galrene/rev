@@ -67,10 +67,14 @@ RID-106 (FIXED)
 =======
 Malloc může selhat. [-1 b.]
 
+RID-107 (LIKELY FIXED)
+=======
 Odstranění záznamu z logu funguje špatně, není konzistentní se
 zařazováním záznamu do logu a vede ke ztrátě informací o alokovaných
 blocích. [-1 b.]
 
+RID-02 (FIXED)
+==============
 Vždy bez výjimky musíte volat původní funkci, i když to je "zbytečné"
 nebo dokonce "škodlivé". Debugovací kód by měl sloužit k tomu, abychom
 se dozvěděli, co aplikace dělá, neměl by měnit logiku chování. Pokud se
@@ -80,13 +84,19 @@ program za funkční a debugovací kód zase odstraníte. To nesmí nastat!
 Lepší je, když zahlásíte varování a následně ať program třeba spadne,
 při ladění to ničemu nevadí. [-3 b.]
 
+RID-108 (LIKELY FIXED)
+=======
 Za určitých okolností upozorňujete na neznámý ukazatel i pro známé
 ukazatele. [-1 b.]
 
+RID-109 (FIXED)
+=======
 Vaše tvrzení v implementaci callocu ("in microsoft implementation this
 would actually be undefined behavior") není pravdivé. Microsoftí
 dokumentace říká něco jiného, než jak to interpretujete.
 
+RID-110 (FIXED)
+=======
 Určitě nejde z realloc volat free. Je dobře, že tento případ řešíte, ale
 je nutné to řešit vhodným voláním původního reallocu (a zalogováním
 výsledku). Voláte-li free, měníte logiku programu a spoléháte se na
@@ -94,10 +104,14 @@ konkrétní interní implementaci paměťových funkcí. Co když je free
 interně implementován tak, že zavolá realloc s vhodnými parametry? Co
 když program vůbec free nepoužívá a tedy neimportuje? [-1 b.]
 
+RID-111 (FIXED)
+=======
 Proč provádíte "if new requested size < current size then copy only what
 fits now"? Toto není vaše starost!! Potenciálně tím měníte chování
 programu, minimálně umožňujete detekci, že se děje něco neobvyklého. [-1 b.]
 
+RID-03 (FIXED)
+======
 Navíc v tom používáte _msize, což nelze: Není to přenositelné (nyní
 přenositelnost neřešíme, ale asi dává smysl uvažovat do budoucna - až
 budete mít hotovou verzi pro Visual Studio, budete ji chtít rozšířit na
@@ -111,6 +125,8 @@ knihovny vašeho monitoru, což nejspíš budou úplně jiné věci. Ve čtvrté
 tato disproporce způsobí, že nebude fungovat! Toto poslední je velmi
 závažná chyba v celé logice úlohy. [-3 b.]
 
+RID-112 (FIXED)
+=======
 Chybí mi varování před neznámým ukazatelem v reallocu. Pokud něco
 takového nastane, typicky program spadne - je potřeba informovat
 uživatele, že něco takového nejspíš nastane, aby nebyl překvapen.
@@ -120,6 +136,8 @@ Nemůžete používat g_OrigMalloc != NULL pro test, jestli už proběhla
 inicializace - program vůbec nemusí malloc používat, pak bude
 g_OrigMalloc vždycky NULL. [-1 b.]
 
+RID-01 (FIXED)
+======
 Adresy původních funkcí nezjišťujete z IAT, ale přímo zkopírováním
 ukazatele na funkci. To je zásadní chyba v řešení a musíte ji opravit,
 aby mohlo být bodováno. Když to neuděláte, tak váš kód bude fungovat

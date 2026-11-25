@@ -342,6 +342,10 @@ void *MallocDebug_realloc(void *memblock, size_t size)
         return NULL;
     }
     
+    // case 4, realloc has allocated a zero length memory block, warn the user
+    if (newMem && memblock == NULL && size == 0)
+        puts("realloc has allocated a zero length memory block, writing and reading it may crash the program.");
+    
     // 1. reallocate existing memory (memblock != NULL && size != 0)
     // 2. free existing memory       (memblock != NULL && size == 0)
     // 3. allocate new memory        (memblock == NULL && size != 0)
