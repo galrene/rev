@@ -129,7 +129,7 @@ vyskyt | body   | solved
 TOP DOGS
 ========
 
-RID-01 (PARTIALLY FIXED: not dealing with ordinals in getFuncAddr)
+RID-01 (FIXED)
 ------
 Adresy původních funkcí nezjišťujete z IAT, ale přímo zkopírováním
 ukazatele na funkci. To je zásadní chyba v řešení a musíte ji opravit,
