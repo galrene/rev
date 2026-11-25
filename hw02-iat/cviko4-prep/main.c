@@ -25,7 +25,6 @@ VYLEPSENIA
 
 */
 
-
 // convert relative virtual address to virtual address (absolute address in memory)
 static void *VA(DWORD rva)
 {
@@ -57,7 +56,7 @@ static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
 }
 
-BOOL patchFirstThunk (PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONGLONG newAddr)
+BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONGLONG newAddr)
 {
     if (UnlockFirstThunk(pImportDesc) == 0)
     {
@@ -85,12 +84,12 @@ int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, 
     // puts("Thunk BEGIN");
     // printf("Searched address: %lld\n", funcAddr);
     for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
-        pFirstThunk->u1.Function != 0ULL; ++pFirstThunk)
+         pFirstThunk->u1.Function != 0ULL; ++pFirstThunk)
     {
         // printf("%d. %lld", i, pFirstThunk->u1.Function);
         if (funcAddr == pFirstThunk->u1.Function)
         {
-            if (! patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
+            if (!patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
                 return UNLOCK_FAILED;
             patchedCnt++;
             // printf("------>%lld", newAddr);
@@ -105,13 +104,13 @@ int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, 
 /**
  * @brief Find all PIMAGE_IMPORT_DESCRIPTORs importing a function of given name and patch
  * their FirstThunks (found by address), using newAddr address.
- * 
- * 
+ *
+ *
  * Each imported .dll is represented by a single IMAGE_IMPORT_DESCRIPTOR.
  * Each FirstThunk points to a segment of IAT belonging to given .dll
- * 
+ *
  * @param funcName name of searched function
- * @param funcImpDescs (out param) pointer to an arry of PIMAGE_IMPORT_DESCRIPTORs 
+ * @param funcImpDescs (out param) pointer to an arry of PIMAGE_IMPORT_DESCRIPTORs
  * @param importedDuplicatesMax length of funcImpDescs array
  * @return int number of found import descriptiors
  */
@@ -141,14 +140,13 @@ int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
     return patchedCnt;
 }
 
-
-
 BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
 {
     int r = patchThunks(funcName, funcAddr, pNewFunc);
     if (r == UNLOCK_FAILED)
         return FALSE;
-    if (r == 0) {
+    if (r == 0)
+    {
         puts("No FirstThunks patched.");
         return FALSE;
     }
@@ -159,10 +157,15 @@ BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
 // ============================
 // RETURN_TYPE (*FUNCTION_NAME)(ARG1_TYPE, ARG2_TYPE, ...);
 
-void *(*g_OrigMalloc)(size_t) = NULL;          // void * malloc(size)
-void *(*g_OrigCalloc)(size_t, size_t) = NULL;  // void * calloc(count, size)
-void *(*g_OrigRealloc)(void *, size_t) = NULL; // void * calloc(ptr, newSize)
-void (*g_OrigFree)(void *) = NULL;             // void   free (ptr)
+typedef void *(*MallocFun)(size_t size);
+typedef void *(*CallocFun)(size_t count, size_t size);
+typedef void *(*ReallocFun)(void *block, size_t newSize);
+typedef void (*FreeFun)(void *block);
+
+static MallocFun g_OrigMalloc = NULL;
+static CallocFun g_OrigCalloc = NULL;
+static ReallocFun g_OrigRealloc = NULL;
+static FreeFun g_OrigFree = NULL;
 
 #define ALLOCATIONS_MAX 50
 
@@ -284,6 +287,59 @@ void *MallocDebug_realloc(void *memblock, size_t size)
         MallocDebug_free(memblock);
     return newMem;
 }
+
+/**
+ * @brief Iterate OFT & FT in parallel, return funcAddr fetched by name in OFT.
+ *
+ * @param funcName
+ * @param len function name length in chars without \0
+ * @return void*
+ */
+ULONG_PTR getFuncAddr(char *funcName)
+{
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
+    // iterate import descriptors (dlls)
+    for (; pImportDesc->Characteristics != 0; ++pImportDesc)
+    {
+        // import address table (IAT)
+        PIMAGE_THUNK_DATA iat = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
+        // import name table (INT)
+        PIMAGE_THUNK_DATA nt = pImportDesc->OriginalFirstThunk
+                                   ? (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk))
+                                   : NULL;
+        // iterate dlls
+        for (size_t i = 0; iat[i].u1.Function != 0; i++)
+        {
+            if (!nt)
+            {
+                // no INT: only the address iat[i].u1.Function is available
+                continue;
+            }
+            if (nt[i].u1.AddressOfData == 0)
+            {
+                puts("INT shorter than IAT: PE malformed. Stopping...");
+                break;
+            }
+
+            if (IMAGE_SNAP_BY_ORDINAL(nt[i].u1.Ordinal))
+            {
+                // WORD ord = (WORD)IMAGE_ORDINAL(nt[i].u1.Ordinal);
+                // printf("#%u -> %p\n", ord, (void *)iat[i].u1.Function);
+                continue;
+            }
+            else
+            {
+                PIMAGE_IMPORT_BY_NAME ibn =
+                    (PIMAGE_IMPORT_BY_NAME)(VA(nt[i].u1.AddressOfData));
+                // printf("%s -> %p\n", ibn->Name, (void *)iat[i].u1.Function);
+                if (strcmp(funcName, ibn->Name) == 0)
+                    return iat[i].u1.Function;
+            }
+        }
+    }
+    return 0;
+}
+
 /**
  * Najde v IAT pozici funkcí malloc, calloc, realloc
  * a free a změní jejich adresu na adresy substitučních funkcí
@@ -296,10 +352,11 @@ BOOL MallocDebug_Init(void)
         return FALSE;
     }
     // backup original function addresses
-    g_OrigMalloc = &malloc;
-    g_OrigCalloc = &calloc;
-    g_OrigRealloc = &realloc;
-    g_OrigFree = &free;
+    // todo: if fun not used, it stays null, which is ok?
+    g_OrigMalloc = (MallocFun)getFuncAddr("malloc");
+    g_OrigCalloc = (CallocFun)getFuncAddr("calloc");
+    g_OrigRealloc = (ReallocFun)getFuncAddr("realloc");
+    g_OrigFree = (FreeFun)getFuncAddr("free");
 
     // todo: replace ULL with something more proper
     if (!replaceFunc("malloc", (ULONGLONG)g_OrigMalloc, (ULONGLONG)MallocDebug_malloc))
@@ -325,7 +382,6 @@ BOOL MallocDebug_Init(void)
     puts("+++++++++++++++++++++++++++++++++++++++");
     puts("revgrind init");
     puts("+++++++++++++++++++++++++++++++++++++++");
-    assert(g_OrigMalloc != &malloc);
     return TRUE;
 }
 
@@ -367,7 +423,7 @@ BOOL MallocDebug_Done(void)
         return FALSE;
     }
     g_OrigFree = NULL;
-    
+
     puts("Original IAT restored.");
 
     // print memory leaks
@@ -414,8 +470,8 @@ int testReallocFree(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
-    assert (_msize(buf) == arrSize * sizeof(int));
-    
+    assert(_msize(buf) == arrSize * sizeof(int));
+
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
     printArr(buf, arrSize);
@@ -425,11 +481,11 @@ int testReallocFree(void)
     buf = (int *)realloc(buf, newArrSize * sizeof(int));
     if (buf != NULL)
     {
-        if ( ! MallocDebug_Done() )
+        if (!MallocDebug_Done())
             return 0;
         return 0;
     }
-    if ( ! MallocDebug_Done() )
+    if (!MallocDebug_Done())
         return 0;
     return 1;
 }
@@ -445,7 +501,7 @@ int testRealloc(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
-    assert (_msize(buf) == arrSize * sizeof(int));
+    assert(_msize(buf) == arrSize * sizeof(int));
     printf("buf size: %zu\n", _msize(buf));
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -455,17 +511,17 @@ int testRealloc(void)
     int *oldbuf = buf;
     buf = (int *)realloc(buf, newArrSize * sizeof(int));
 
-    assert (_msize(buf) == newArrSize * sizeof(int));
+    assert(_msize(buf) == newArrSize * sizeof(int));
     printf("buf newsize: %zu\n", _msize(buf));
     for (int i = arrSize; i < newArrSize; ++i)
         buf[i] = i;
     printArr(buf, newArrSize);
 
-    assert (oldbuf != buf);
+    assert(oldbuf != buf);
 
     free(buf);
 
-    if ( ! MallocDebug_Done() )
+    if (!MallocDebug_Done())
         return 0;
     return 1;
 }
@@ -482,7 +538,7 @@ int testReallocNew(void)
     int *buf = NULL;
     buf = (int *)realloc(buf, size * sizeof(int));
 
-    assert (_msize(buf) == size * sizeof(int));
+    assert(_msize(buf) == size * sizeof(int));
 
     for (int i = 0; i < size; ++i)
         buf[i] = i;
@@ -490,7 +546,7 @@ int testReallocNew(void)
 
     free(buf);
 
-    if ( ! MallocDebug_Done() )
+    if (!MallocDebug_Done())
         return 0;
     return 1;
 }
@@ -506,7 +562,7 @@ int testCallocNormal(void)
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
 
-    assert (_msize(buf) == size * sizeof(int));
+    assert(_msize(buf) == size * sizeof(int));
 
     printArr(buf, size);
 
@@ -515,7 +571,7 @@ int testCallocNormal(void)
     printArr(buf, size);
 
     free(buf);
-    if ( ! MallocDebug_Done() )
+    if (!MallocDebug_Done())
         return 0;
     return 1;
 }
@@ -530,16 +586,18 @@ int testCallocLeak(void)
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
 
-    assert (_msize(buf) == size * sizeof(int));
+    assert(_msize(buf) == size * sizeof(int));
 
     printArr(buf, size);
-    if ( ! MallocDebug_Done() )
+    if (!MallocDebug_Done())
         return 0;
     return 1;
 }
 
 int main(void)
 {
+    // void *(*g_OrigMalloc)(size_t) = NULL;          // void * malloc(size)
+    // printf("%p\n%p\n", g_OrigMalloc, malloc);
     assert(testRealloc() == 1);
     assert(testReallocNew() == 1);
     assert(testReallocFree() == 1);

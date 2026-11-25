@@ -1,0 +1,162 @@
+ Obecně, v kódu tohoto typu je trochu nešikovné používat DWORD pro
+ukládání dat nebo jejich přetypování. Problém je, že když pak stejný
+program překompilujete do 64 bitů, tak se ani nedozvíte, že je něco
+špatně - akorát program přestane fungovat. Zároveň pak bude obtížné
+program opravit, protože bude nutné projít celý program a hledat, které
+výskyty DWORD jsou relevantní a které ne. Bylo by dobré nadefinovat si
+vlastní typ a ten potom pomocí preprocesoru můžete snadno změnit z DWORD
+na ULONGLONG podle potřeby. Nebo rovnou používat nějaký ukazatel.
+
+Voláte GetModuleHandle znovu a znovu pro každé volání VA(). Je to
+nezbytné? Plus jste rovnou mohl i řešit případ, že RVA==0.
+
+Snažte se nepoužívat sizeof(typ), když sizeof(proměnná) udělá stejnou
+službu. Jsou případy, kdy je sizeof(typ) výhodnější, ale obvykle je to
+naopak - protože sizeof(prom) vám bude fungovat i v případě, že se někdy
+v budoucnosti typ proměnné změní.
+
+Poté, co provedete zápis do IAT, byste měl ochranu paměťové stránky
+nastavit do původního stavu. Co když program počítá s tím, že je IAT
+určitě read-only? [-1 b.]
+
+Není úplně ideální, když v případě, že VirtualProtect selže, prostě
+ukončíte nahrazování. Co vy víte, třeba budete mít kliku a IAT bude
+zapisovatelná už sama o sobě, takže na chybě ve volání VirtualProtect
+nebude záležet.
+
+Bylo by vhodné, kdybyste se ve smyčce přes všechny import descriptory
+nespoléhal jen na prvek Characteristics, ale zahrnul do kontrol také
+velikost adresáře. Ano, mělo by to být v souladu, ale přesto byste měl
+ověřovat všechny vstupy co nejdůsledněji. Co když náhodou ta data na
+sebe hrát nebudou, třeba nebude v programu ten ukončovací vynulovaný
+deskriptor? [-1 b.]
+
+Nahrazujete úplně všechny funkce s daným jménem ve všech modulech. Třeba
+u funkce "free" se dá docela dobře očekávat, že existuje v mnoha různých
+DLL a v každé má jinou funkci. Nahradit ji všude je velmi rizikové. Měl
+byste nahrazovat jen ty funkce, kde jednoznačně víte, co dělají - tzn.
+zahrnout do porovnání také jméno knihovny (které zde vystupuje jako něco
+jako namespace).
+
+To, jak používáte strncmp ve funkci patchThunks, je jednoznačně špatně.
+I když třeba teď zrovna nevede na chyby, stejně je to špatně.
+Vysvětlete, v čem. [-1 b.]
+
+Velmi nedoporučuju mít N polí pro různé typy dat (ukazatel na paměť,
+velikost paměti). Sice tak program bude fungovat, ale bude se to špatně
+upravovat, kdybyste potřeboval přidat další údaj (srovnejte s polem
+struktur) a je to pomalé kvůli práci s cache (až řádově pomalejší než
+pole struktur).
+
+Test na g_AllocCnt >= ALLOCATIONS_MAX byste měl dělat až v okamžiku, kdy
+víte, že ho potřebujete.
+
+Malloc může selhat. [-1 b.]
+
+Odstranění záznamu z logu funguje špatně, není konzistentní se
+zařazováním záznamu do logu a vede ke ztrátě informací o alokovaných
+blocích. [-1 b.]
+
+Vždy bez výjimky musíte volat původní funkci, i když to je "zbytečné"
+nebo dokonce "škodlivé". Debugovací kód by měl sloužit k tomu, abychom
+se dozvěděli, co aplikace dělá, neměl by měnit logiku chování. Pokud se
+řídíte něčím jiným, měníte chování programu a tím můžete například
+potlačit existující chyby. Ty se pak projeví v okamžiku, kdy prohlásíte
+program za funkční a debugovací kód zase odstraníte. To nesmí nastat!
+Lepší je, když zahlásíte varování a následně ať program třeba spadne,
+při ladění to ničemu nevadí. [-3 b.]
+
+Za určitých okolností upozorňujete na neznámý ukazatel i pro známé
+ukazatele. [-1 b.]
+
+Vaše tvrzení v implementaci callocu ("in microsoft implementation this
+would actually be undefined behavior") není pravdivé. Microsoftí
+dokumentace říká něco jiného, než jak to interpretujete.
+
+Určitě nejde z realloc volat free. Je dobře, že tento případ řešíte, ale
+je nutné to řešit vhodným voláním původního reallocu (a zalogováním
+výsledku). Voláte-li free, měníte logiku programu a spoléháte se na
+konkrétní interní implementaci paměťových funkcí. Co když je free
+interně implementován tak, že zavolá realloc s vhodnými parametry? Co
+když program vůbec free nepoužívá a tedy neimportuje? [-1 b.]
+
+Proč provádíte "if new requested size < current size then copy only what
+fits now"? Toto není vaše starost!! Potenciálně tím měníte chování
+programu, minimálně umožňujete detekci, že se děje něco neobvyklého. [-1 b.]
+
+Navíc v tom používáte _msize, což nelze: Není to přenositelné (nyní
+přenositelnost neřešíme, ale asi dává smysl uvažovat do budoucna - až
+budete mít hotovou verzi pro Visual Studio, budete ji chtít rozšířit na
+další kompilátory, které třeba _msize mít nebudou a vy budete muset
+logiku předělávat), a hlavně, pokud chcete z MallocDebug_cokoliv
+používat jakékoliv paměťové funkce, musíte je volat přes adresu získanou
+z IAT; tak, jak to děláte nyní, se pro práci s pamětí používají funkce z
+běhové knihovny programu, ale pro operaci _msize funkce z běhové
+knihovny vašeho monitoru, což nejspíš budou úplně jiné věci. Ve čtvrté
+úloze budeme program rozšiřovat tak, aby šel použít na cizí programy, a
+tato disproporce způsobí, že nebude fungovat! Toto poslední je velmi
+závažná chyba v celé logice úlohy. [-3 b.]
+
+Chybí mi varování před neznámým ukazatelem v reallocu. Pokud něco
+takového nastane, typicky program spadne - je potřeba informovat
+uživatele, že něco takového nejspíš nastane, aby nebyl překvapen.
+Samozřejmě jen v případech, že skutečně něco takového hrozí. [-1 b.]
+
+Nemůžete používat g_OrigMalloc != NULL pro test, jestli už proběhla
+inicializace - program vůbec nemusí malloc používat, pak bude
+g_OrigMalloc vždycky NULL. [-1 b.]
+
+Adresy původních funkcí nezjišťujete z IAT, ale přímo zkopírováním
+ukazatele na funkci. To je zásadní chyba v řešení a musíte ji opravit,
+aby mohlo být bodováno. Když to neuděláte, tak váš kód bude fungovat
+*výhradně* v té hračce, kterou děláme teď, ale *nebude možné* ho použít
+v realistickém případě, který na ni navazuje. [-10 b.]
+
+Proč pro pokračování v programu požadujete, aby se podařilo nahradit
+*všechny* paměťové funkce? Pokud máme program, který např. calloc a
+realloc nepoužívá, protože si vystačí s malloc a free, tak ho logovat
+nebudeme? Z jakého důvodu? [-1 b.]
+
+Josef Kokeš
+
+vyskyt | body   | solved
+ 12x     -1     | PARTIAL
+ 2x      -3
+ 1x      -10b
+
+
+
+TOP DOGS
+========
+
+RID-01 (PARTIALLY FIXED: not dealing with ordinals in getFuncAddr)
+------
+Adresy původních funkcí nezjišťujete z IAT, ale přímo zkopírováním
+ukazatele na funkci. To je zásadní chyba v řešení a musíte ji opravit,
+aby mohlo být bodováno. Když to neuděláte, tak váš kód bude fungovat
+*výhradně* v té hračce, kterou děláme teď, ale *nebude možné* ho použít
+v realistickém případě, který na ni navazuje. [-10 b.]
+
+    ACTION: Adresy povodnych funkcii zistovat z IAT. Nie volanim &malloc, etc.
+
+Vždy bez výjimky musíte volat původní funkci, i když to je "zbytečné"
+nebo dokonce "škodlivé". Debugovací kód by měl sloužit k tomu, abychom
+se dozvěděli, co aplikace dělá, neměl by měnit logiku chování. Pokud se
+řídíte něčím jiným, měníte chování programu a tím můžete například
+potlačit existující chyby. Ty se pak projeví v okamžiku, kdy prohlásíte
+program za funkční a debugovací kód zase odstraníte. To nesmí nastat!
+Lepší je, když zahlásíte varování a následně ať program třeba spadne,
+při ladění to ničemu nevadí. [-3 b.]
+
+Navíc v tom používáte _msize, což nelze: Není to přenositelné (nyní
+přenositelnost neřešíme, ale asi dává smysl uvažovat do budoucna - až
+budete mít hotovou verzi pro Visual Studio, budete ji chtít rozšířit na
+další kompilátory, které třeba _msize mít nebudou a vy budete muset
+logiku předělávat), a hlavně, pokud chcete z MallocDebug_cokoliv
+používat jakékoliv paměťové funkce, musíte je volat přes adresu získanou
+z IAT; tak, jak to děláte nyní, se pro práci s pamětí používají funkce z
+běhové knihovny programu, ale pro operaci _msize funkce z běhové
+knihovny vašeho monitoru, což nejspíš budou úplně jiné věci. Ve čtvrté
+úloze budeme program rozšiřovat tak, aby šel použít na cizí programy, a
+tato disproporce způsobí, že nebude fungovat! Toto poslední je velmi
+závažná chyba v celé logice úlohy. [-3 b.]
