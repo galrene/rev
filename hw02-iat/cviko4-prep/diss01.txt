@@ -132,6 +132,8 @@ takového nastane, typicky program spadne - je potřeba informovat
 uživatele, že něco takového nejspíš nastane, aby nebyl překvapen.
 Samozřejmě jen v případech, že skutečně něco takového hrozí. [-1 b.]
 
+RID-113 (FIXED)
+=======
 Nemůžete používat g_OrigMalloc != NULL pro test, jestli už proběhla
 inicializace - program vůbec nemusí malloc používat, pak bude
 g_OrigMalloc vždycky NULL. [-1 b.]

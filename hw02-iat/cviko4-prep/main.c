@@ -201,7 +201,7 @@ static FreeFun g_OrigFree = NULL;
 ULONG_PTR g_AllocatedMemory[ALLOCATIONS_MAX] = {0};
 size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
 size_t g_AllocCnt = 0;
-
+BOOL g_RevgrindInitialised = FALSE;
 /**
  * loguju:
  * 1. pamat sa alokovala
@@ -442,11 +442,13 @@ ULONG_PTR getFuncAddr(char *funcName)
  */
 BOOL MallocDebug_Init(void)
 {
-    if (g_OrigMalloc != NULL)
+    if (g_RevgrindInitialised == TRUE)
     { // or other func is not NULL
         puts("Init already called - not doing anything.");
         return FALSE;
     }
+    g_RevgrindInitialised = TRUE;
+
     // backup original function addresses
     // todo: if fun not used, it stays null, which is ok?
     g_OrigMalloc = (MallocFun)getFuncAddr("malloc");
@@ -487,7 +489,7 @@ BOOL MallocDebug_Init(void)
  */
 BOOL MallocDebug_Done(void)
 {
-    if (g_OrigMalloc == NULL)
+    if (g_RevgrindInitialised == FALSE)
     {
         puts("Done called but revgrind hasn't been initialised.");
         return FALSE;
@@ -546,6 +548,7 @@ BOOL MallocDebug_Done(void)
     // zero g_AllocatedMemory
     // zero g_AllocatedMemorySize
     // g_AllocCnt = 0;
+    g_RevgrindInitialised = FALSE;
     puts("---------------------------------------");
     puts("revgrind done");
     puts("---------------------------------------");
