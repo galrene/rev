@@ -43,28 +43,57 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     return pImportDesc;
 }
 
-static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
-{
-    PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImp->FirstThunk));
+// static BOOL UnlockFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImp)
+// {
+//     PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImp->FirstThunk));
 
-    SIZE_T count = 0;
-    while (t[count].u1.Function != 0)
-        count++;
+//     SIZE_T count = 0;
+//     while (t[count].u1.Function != 0)
+//         count++;
 
-    SIZE_T pBytes = count * sizeof(IMAGE_THUNK_DATA);
-    DWORD pOldProt = 0;
-    return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
-}
+//     SIZE_T pBytes = count * sizeof(IMAGE_THUNK_DATA);
+//     DWORD pOldProt = 0;
+//     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
+// }
 
 BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONGLONG newAddr)
-{
-    if (UnlockFirstThunk(pImportDesc) == 0)
-    {
-        DWORD r = GetLastError();
-        printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
-        return FALSE;
-    }
+{    
     pFirstThunk->u1.Function = newAddr;
+    // test if IAT's not already unlocked for writing
+    __try {
+        // patch function
+        pFirstThunk->u1.Function = newAddr;
+    }
+    // todo should ideally only catch read violations
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        // not unlocked,
+        // unlock thunk for writing
+        PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
+        SIZE_T count = 0;
+        while (t[count].u1.Function != 0)
+            count++;
+
+        SIZE_T pBytes = count * sizeof(IMAGE_THUNK_DATA);
+        DWORD pOldProt = 0;
+        if (!VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt))
+        {
+            DWORD r = GetLastError();
+            printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
+            return FALSE;
+        }
+        // patch function
+        pFirstThunk->u1.Function = newAddr;
+
+        // restore thunk permissions
+        DWORD rePerms = 0;
+        if (!VirtualProtect(t, pBytes, pOldProt, &rePerms))
+        {
+            DWORD r = GetLastError();
+            printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
+            return FALSE;
+        }
+    }
+
     return TRUE;
 }
 
@@ -169,7 +198,7 @@ static FreeFun g_OrigFree = NULL;
 
 #define ALLOCATIONS_MAX 50
 
-uintptr_t g_AllocatedMemory[ALLOCATIONS_MAX] = {0};
+ULONG_PTR g_AllocatedMemory[ALLOCATIONS_MAX] = {0};
 size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
 size_t g_AllocCnt = 0;
 
@@ -192,7 +221,7 @@ void *MallocDebug_malloc(size_t size)
         puts("Not enough space on the heap for new allocations.");
         return NULL;  
     }
-    g_AllocatedMemory[g_AllocCnt] = (uintptr_t)ptr;
+    g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)ptr;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
     printf("Allocated %zu bytes @%p\n", size, ptr);
@@ -263,7 +292,7 @@ void *MallocDebug_calloc(size_t number, size_t size)
     }
     
     printf("Allocated memory @%p\n", buf);
-    g_AllocatedMemory[g_AllocCnt] = (uintptr_t)buf;
+    g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)buf;
     g_AllocatedMemorySize[g_AllocCnt++] = size * number;
 
     return buf;
@@ -343,7 +372,7 @@ void *MallocDebug_realloc(void *memblock, size_t size)
     // match every case except freeing memory AND check 4. case if this impl. returned non-NULL
     if ((! (memblock != NULL && size == 0) ) && newMem)
     {
-        g_AllocatedMemory[g_AllocCnt] = (uintptr_t)newMem;
+        g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)newMem;
         g_AllocatedMemorySize[g_AllocCnt++] = size;
     }
 

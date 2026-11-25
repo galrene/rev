@@ -15,6 +15,8 @@ službu. Jsou případy, kdy je sizeof(typ) výhodnější, ale obvykle je to
 naopak - protože sizeof(prom) vám bude fungovat i v případě, že se někdy
 v budoucnosti typ proměnné změní.
 
+RID-101 (FIXED)
+===============
 Poté, co provedete zápis do IAT, byste měl ochranu paměťové stránky
 nastavit do původního stavu. Co když program počítá s tím, že je IAT
 určitě read-only? [-1 b.]
@@ -24,6 +26,8 @@ ukončíte nahrazování. Co vy víte, třeba budete mít kliku a IAT bude
 zapisovatelná už sama o sobě, takže na chybě ve volání VirtualProtect
 nebude záležet.
 
+RID-102
+===============
 Bylo by vhodné, kdybyste se ve smyčce přes všechny import descriptory
 nespoléhal jen na prvek Characteristics, ale zahrnul do kontrol také
 velikost adresáře. Ano, mělo by to být v souladu, ale přesto byste měl
