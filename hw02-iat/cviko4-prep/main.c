@@ -176,7 +176,7 @@ BOOL replaceFunc(char *funcName, ULONG_PTR funcAddr, ULONG_PTR pNewFunc)
         return FALSE;
     if (r == 0)
     {
-        puts("No FirstThunks patched.");
+        printf("No FirstThunks for %s to be patched found.\n", funcName);
         return FALSE;
     }
     return TRUE;
@@ -459,23 +459,19 @@ BOOL MallocDebug_Init(void)
     // todo: replace ULL with something more proper
     if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
     {
-        puts("Patching malloc failed.");
-        return FALSE;
+        puts("Malloc not patched.");
     }
     if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc))
     {
-        puts("Patching calloc failed.");
-        return FALSE;
+        puts("Calloc not patched.");
     }
     if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc))
     {
-        puts("Patching realloc failed.");
-        return FALSE;
+        puts("Realloc not patched.");
     }
     if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free))
     {
-        puts("Patching free failed.");
-        return FALSE;
+        puts("Free not patched.");
     }
     puts("+++++++++++++++++++++++++++++++++++++++");
     puts("revgrind init");
@@ -499,26 +495,22 @@ BOOL MallocDebug_Done(void)
     // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
     if (!replaceFunc("malloc", (ULONG_PTR)malloc, (ULONG_PTR)g_OrigMalloc))
     {
-        puts("Restoring malloc failed.");
-        return FALSE;
+        puts("Malloc not restored.");
     }
     g_OrigMalloc = NULL;
     if (!replaceFunc("calloc", (ULONG_PTR)calloc, (ULONG_PTR)g_OrigCalloc))
     {
-        puts("Restoring calloc failed.");
-        return FALSE;
+        puts("Calloc not restored.");
     }
     g_OrigCalloc = NULL;
     if (!replaceFunc("realloc", (ULONG_PTR)realloc, (ULONG_PTR)g_OrigRealloc))
     {
-        puts("Restoring realloc failed.");
-        return FALSE;
+        puts("Realloc not restored.");
     }
     g_OrigRealloc = NULL;
     if (!replaceFunc("free", (ULONG_PTR)free, (ULONG_PTR)g_OrigFree))
     {
-        puts("Restoring free failed.");
-        return FALSE;
+        puts("Free not restored.");
     }
     g_OrigFree = NULL;
 
@@ -544,7 +536,7 @@ BOOL MallocDebug_Done(void)
     {
         puts("No memory leaked.");
     }
-    // todo not sure if i want to clean this up?
+    // todo not sure if i need to clean this up?
     // zero g_AllocatedMemory
     // zero g_AllocatedMemorySize
     // g_AllocCnt = 0;

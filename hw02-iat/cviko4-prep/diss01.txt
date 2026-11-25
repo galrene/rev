@@ -1,3 +1,5 @@
+RID-115
+=======
  Obecně, v kódu tohoto typu je trochu nešikovné používat DWORD pro
 ukládání dat nebo jejich přetypování. Problém je, že když pak stejný
 program překompilujete do 64 bitů, tak se ani nedozvíte, že je něco
@@ -7,9 +9,13 @@ výskyty DWORD jsou relevantní a které ne. Bylo by dobré nadefinovat si
 vlastní typ a ten potom pomocí preprocesoru můžete snadno změnit z DWORD
 na ULONGLONG podle potřeby. Nebo rovnou používat nějaký ukazatel.
 
+RID-116
+=======
 Voláte GetModuleHandle znovu a znovu pro každé volání VA(). Je to
 nezbytné? Plus jste rovnou mohl i řešit případ, že RVA==0.
 
+RID-117
+=======
 Snažte se nepoužívat sizeof(typ), když sizeof(proměnná) udělá stejnou
 službu. Jsou případy, kdy je sizeof(typ) výhodnější, ale obvykle je to
 naopak - protože sizeof(prom) vám bude fungovat i v případě, že se někdy
@@ -146,13 +152,15 @@ aby mohlo být bodováno. Když to neuděláte, tak váš kód bude fungovat
 *výhradně* v té hračce, kterou děláme teď, ale *nebude možné* ho použít
 v realistickém případě, který na ni navazuje. [-10 b.]
 
+RID-114 (FIXED)
+=======
 Proč pro pokračování v programu požadujete, aby se podařilo nahradit
 *všechny* paměťové funkce? Pokud máme program, který např. calloc a
 realloc nepoužívá, protože si vystačí s malloc a free, tak ho logovat
 nebudeme? Z jakého důvodu? [-1 b.]
 
 Josef Kokeš
-
+-------------------------------------------------------------------------
 vyskyt | body   | solved
  12x     -1     | 
  2x      -3     | YES
@@ -225,3 +233,7 @@ So the same two cases apply, and free(p) handles both.
 
 One difference from malloc: calloc checks whether nmemb * size overflows and returns NULL if it does.
 malloc(nmemb * size) silently wraps and can allocate a block that's too small.
+
+RID-12
+------
+Uprav patchThunks iteraciu podla (opravenej) getFuncAddr iteracie.
