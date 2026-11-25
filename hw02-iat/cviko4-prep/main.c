@@ -25,7 +25,6 @@ static void *VA(DWORD rva)
     static BYTE *base;
     if (!base)
     {
-        puts("GetModuleHandle called.");
         base = (BYTE *)GetModuleHandle(NULL);
     }
     return base + rva;
@@ -37,9 +36,29 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
 
-    // 1 import descriptor per imported DLL
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)(((BYTE *)pDosHeader) + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+    IMAGE_DATA_DIRECTORY *dir =
+        &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir->VirtualAddress == 0 || dir->Size == 0)
+        return 0;   // no imports
+    
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)VA(dir->VirtualAddress);
     return pImportDesc;
+}
+
+PIMAGE_IMPORT_DESCRIPTOR getImpDescEnd(void)
+{
+    HMODULE hPEFile = GetModuleHandle(NULL);
+    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
+    PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
+    
+    IMAGE_DATA_DIRECTORY *dir =
+        &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir->VirtualAddress == 0 || dir->Size == 0)
+        return 0;   // no imports
+    
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)VA(dir->VirtualAddress);
+    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)pImportDesc + dir->Size);
+    return pImportDescEnd;
 }
 
 BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
@@ -132,8 +151,10 @@ int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr)
 {
     unsigned int patchedCnt = 0;
     // iterate dlls
-    for (PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
-         pImportDesc->Characteristics != 0; ++pImportDesc)
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
+    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
+
+    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
         // iterate dll's imported functions
         for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk));
@@ -377,8 +398,9 @@ void *MallocDebug_realloc(void *memblock, size_t size)
 ULONG_PTR getFuncAddr(char *funcName)
 {
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
+    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
     // iterate import descriptors (dlls)
-    for (; pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
+    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
         // import address table (IAT)
         PIMAGE_THUNK_DATA iat = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
@@ -548,7 +570,7 @@ int testReallocFree(void)
     }
 
     const int arrSize = 4;
-    int *buf = (int *)malloc(arrSize * sizeof(buf));
+    int *buf = (int *)malloc(arrSize * sizeof(*buf));
 
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -556,7 +578,7 @@ int testReallocFree(void)
 
     const int newArrSize = 0;
     int *tmp = NULL;
-    tmp = (int *)realloc(buf, newArrSize * sizeof(tmp));
+    tmp = (int *)realloc(buf, newArrSize * sizeof(*tmp));
     if (tmp != NULL)
     {
         if (!MallocDebug_Done())
@@ -578,7 +600,7 @@ int testRealloc(void)
     }
 
     const int arrSize = 4;
-    int *buf = (int *)malloc(arrSize * sizeof(buf));
+    int *buf = (int *)malloc(arrSize * sizeof(*buf));
     
     assert (buf);
     
@@ -588,7 +610,7 @@ int testRealloc(void)
 
     const int newArrSize = 2 * arrSize;
     int *tmp = NULL;
-    tmp = (int *)realloc(buf, newArrSize * sizeof(tmp));
+    tmp = (int *)realloc(buf, newArrSize * sizeof(*tmp));
     
     assert (tmp != NULL); // should free buf here if tmp == NULL (realloc failed)
     buf = tmp;
@@ -615,7 +637,7 @@ int testReallocNew(void)
 
     const int size = 2;
     int *buf = NULL;
-    buf = (int *)realloc(buf, size * sizeof(buf));
+    buf = (int *)realloc(buf, size * sizeof(*buf));
     
     assert (buf != NULL);
 
@@ -687,7 +709,7 @@ int testReallocZeroReallocAgain(void)
     puts("Reallocating 0 length buffer into a larger one");
     const int arrSize = 8;
     int * tmp = NULL;
-    tmp = (int *)realloc(buf, arrSize * sizeof(tmp));
+    tmp = (int *)realloc(buf, arrSize * sizeof(*tmp));
     assert (tmp != NULL);
     buf = tmp;
     
@@ -712,7 +734,7 @@ int testCallocNormal(void)
     }
 
     const int size = 9;
-    int *buf = calloc(size, sizeof(buf));
+    int *buf = calloc(size, sizeof(*buf));
 
     printArr(buf, size);
 
@@ -735,7 +757,7 @@ int testCallocLeak(void)
         return 0;
     }
     const int size = 9;
-    int *buf = calloc(size, sizeof(buf));
+    int *buf = calloc(size, sizeof(*buf));
 
     printArr(buf, size);
     if (!MallocDebug_Done())
