@@ -538,8 +538,6 @@ int testReallocFree(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
-    // assert(_msize(buf) == arrSize * sizeof(int));
-
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
     printArr(buf, arrSize);
@@ -571,9 +569,6 @@ int testRealloc(void)
     int *buf = (int *)malloc(arrSize * sizeof(int));
     
     assert (buf);
-    assert(_msize(buf) == arrSize * sizeof(int));
-    
-    printf("buf size: %zu\n", _msize(buf));
     
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -586,9 +581,6 @@ int testRealloc(void)
     assert (tmp != NULL); // should free buf here if tmp == NULL (realloc failed)
     buf = tmp;
 
-    assert(_msize(buf) == newArrSize * sizeof(int));
-    
-    printf("buf newsize: %zu\n", _msize(buf));
     for (int i = arrSize; i < newArrSize; ++i)
         buf[i] = i;
     printArr(buf, newArrSize);
@@ -614,7 +606,6 @@ int testReallocNew(void)
     buf = (int *)realloc(buf, size * sizeof(int));
     
     assert (buf != NULL);
-    assert(_msize(buf) == size * sizeof(int));
 
     for (int i = 0; i < size; ++i)
         buf[i] = i;
@@ -711,8 +702,6 @@ int testCallocNormal(void)
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
 
-    assert(_msize(buf) == size * sizeof(int));
-
     printArr(buf, size);
 
     for (size_t i = 0; i < size; ++i)
@@ -735,8 +724,6 @@ int testCallocLeak(void)
     }
     const int size = 9;
     int *buf = calloc(size, sizeof(int));
-
-    assert(_msize(buf) == size * sizeof(int));
 
     printArr(buf, size);
     if (!MallocDebug_Done())

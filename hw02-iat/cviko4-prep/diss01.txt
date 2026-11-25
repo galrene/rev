@@ -121,7 +121,7 @@ Josef Kokeš
 
 vyskyt | body   | solved
  12x     -1     | 
- 2x      -3     | 
+ 2x      -3     | YES
  1x      -10b   | YES
 
 
@@ -152,6 +152,8 @@ při ladění to ničemu nevadí. [-3 b.]
 
     ACTION: Upravit debug_calloc a debug_realloc aby volal povodnu funkciu.
 
+RID-03 (FIXED)
+------
 Navíc v tom používáte _msize, což nelze: Není to přenositelné (nyní
 přenositelnost neřešíme, ale asi dává smysl uvažovat do budoucna - až
 budete mít hotovou verzi pro Visual Studio, budete ji chtít rozšířit na
