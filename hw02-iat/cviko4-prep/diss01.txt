@@ -120,9 +120,9 @@ nebudeme? Z jakého důvodu? [-1 b.]
 Josef Kokeš
 
 vyskyt | body   | solved
- 12x     -1     | PARTIAL
- 2x      -3
- 1x      -10b
+ 12x     -1     | 
+ 2x      -3     | 
+ 1x      -10b   | YES
 
 
 
@@ -139,6 +139,8 @@ v realistickém případě, který na ni navazuje. [-10 b.]
 
     ACTION: Adresy povodnych funkcii zistovat z IAT. Nie volanim &malloc, etc.
 
+RID-02 (FIXED)
+------
 Vždy bez výjimky musíte volat původní funkci, i když to je "zbytečné"
 nebo dokonce "škodlivé". Debugovací kód by měl sloužit k tomu, abychom
 se dozvěděli, co aplikace dělá, neměl by měnit logiku chování. Pokud se
@@ -147,6 +149,8 @@ potlačit existující chyby. Ty se pak projeví v okamžiku, kdy prohlásíte
 program za funkční a debugovací kód zase odstraníte. To nesmí nastat!
 Lepší je, když zahlásíte varování a následně ať program třeba spadne,
 při ladění to ničemu nevadí. [-3 b.]
+
+    ACTION: Upravit debug_calloc a debug_realloc aby volal povodnu funkciu.
 
 Navíc v tom používáte _msize, což nelze: Není to přenositelné (nyní
 přenositelnost neřešíme, ale asi dává smysl uvažovat do budoucna - až
@@ -160,3 +164,28 @@ knihovny vašeho monitoru, což nejspíš budou úplně jiné věci. Ve čtvrté
 úloze budeme program rozšiřovat tak, aby šel použít na cizí programy, a
 tato disproporce způsobí, že nebude fungovat! Toto poslední je velmi
 závažná chyba v celé logice úlohy. [-3 b.]
+
+
+SELF-RIDS
+=========
+
+RID-11
+------
+Skontroluj vsetky cases ked su zero length alokacie a moze byt returned NULL alebo zero length mem ptr.
+
+TODO MALLOC
+DONE FOR REALLOC
+TODO CALLOC
+
+NOTE FOR CALLOC
+Yes. If either argument is 0 (calloc(0, n) or calloc(n, 0)), the total size is 0,
+and the standard gives the same implementation-defined choice as for malloc(0): it returns
+either NULL or a unique non-NULL pointer that you must not dereference.
+
+MSVC UCRT: it turns the size into 1 and returns a non-NULL zero-length block, so it must be freed.
+glibc: it returns a non-NULL minimum-size chunk.
+
+So the same two cases apply, and free(p) handles both.
+
+One difference from malloc: calloc checks whether nmemb * size overflows and returns NULL if it does.
+malloc(nmemb * size) silently wraps and can allocate a block that's too small.
