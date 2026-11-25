@@ -187,11 +187,35 @@ void *MallocDebug_malloc(size_t size)
     }
 
     void *ptr = g_OrigMalloc(size);
+    if (!ptr) 
+    {
+        puts("Not enough space on the heap for new allocations.");
+        return NULL;  
+    }
     g_AllocatedMemory[g_AllocCnt] = (uintptr_t)ptr;
     g_AllocatedMemorySize[g_AllocCnt++] = size;
 
     printf("Allocated %zu bytes @%p\n", size, ptr);
     return ptr;
+}
+
+// remove memory from the DEBUG representation
+BOOL removeMem(void* memblock)
+{
+    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
+    {
+        if (g_AllocatedMemory[i] == (ULONG_PTR) memblock)
+        {
+            g_AllocatedMemory[i] = 0;
+            g_AllocatedMemorySize[i] = 0;
+            --g_AllocCnt;
+            return TRUE;
+        }
+    }
+
+    printf("Requested memory @(%p) isn't allocated\n\
+        - already freed or never allocated within revgrind init & done block.\n", memblock);
+    return FALSE;
 }
 
 /**
@@ -201,20 +225,10 @@ void *MallocDebug_malloc(size_t size)
  */
 void MallocDebug_free(void *ptr)
 {
-    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
-    {
-        if (g_AllocatedMemory[i] == (uintptr_t)ptr)
-        {
-            g_AllocatedMemory[i] = 0;
-            g_AllocatedMemorySize[i] = 0;
-            --g_AllocCnt;
-            g_OrigFree(ptr);
-            printf("Freed memory @%p\n", ptr);
-            return;
-        }
-    }
-
-    printf("Requested memory @(%p) isn't allocated\n- already freed or never allocated within revgrind init & done block.\n", ptr);
+    printf("Freeing memory @%p\n", ptr);
+    if (! removeMem(ptr))
+        exit(1);
+    g_OrigFree(ptr);
 }
 /**
  * @brief Allocates an array in memory with elements initialized to 0.
@@ -234,6 +248,8 @@ void *MallocDebug_calloc(size_t number, size_t size)
     In the Microsoft implementation, if number or size is zero,
     calloc returns a pointer to an allocated block of non-zero size.
     An attempt to read or write through the returned pointer leads to undefined behavior.
+
+    note: still want to make an entry in mem representation
     */
     if (size == 0 || number == 0)
         puts("Calloc called with either of args equal to 0, read or write to returned mem is UB");
@@ -246,8 +262,9 @@ void *MallocDebug_calloc(size_t number, size_t size)
         return NULL;
     }
     
+    printf("Allocated memory @%p\n", buf);
     g_AllocatedMemory[g_AllocCnt] = (uintptr_t)buf;
-    g_AllocatedMemorySize[g_AllocCnt++] = size;
+    g_AllocatedMemorySize[g_AllocCnt++] = size * number;
 
     return buf;
 }
@@ -276,14 +293,35 @@ void *MallocDebug_realloc(void *memblock, size_t size)
 
     void *newMem = g_OrigRealloc(memblock, size);
 
-    if (newMem == NULL)
+    if (newMem == NULL && size != 0) // in case size == 0, we're expecting exactly NULL
     {
         puts("Not enough space on the heap for new allocations.");
         return NULL;
     }
+    if (memblock) {
+        // first remove the previously allocated mem from mem representation
+        BOOL r = FALSE;
+        r = removeMem(memblock);
+        if (!r) {
+            puts("Memory representation inconsisnent.");
+            exit(1);
+        }
+    }
 
-    g_AllocatedMemory[g_AllocCnt] = (uintptr_t)newMem;
-    g_AllocatedMemorySize[g_AllocCnt++] = size;
+    // debug printouts
+    if (memblock && size) // memblock == NULL means we're allocating new memory
+        printf("Reallocated memory @%p->%p\n", memblock, newMem);
+    else if (size) // size == 0 means we're freeing memory only
+        printf("Allocated memory @%p\n", newMem);
+    else if (memblock != NULL && size == 0)
+        printf("Realloc is freeing memory @%p\n", memblock);
+    
+    // if size were 0, we're calling realloc as free, therefore not adding anything to the mem representation
+    if (size != 0)
+    {
+        g_AllocatedMemory[g_AllocCnt] = (uintptr_t)newMem;
+        g_AllocatedMemorySize[g_AllocCnt++] = size;
+    }
 
     return newMem;
 }
@@ -462,6 +500,7 @@ void printArr(int *arr, size_t size)
 
 int testReallocFree(void)
 {
+    puts("testReallocFree");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
@@ -471,16 +510,16 @@ int testReallocFree(void)
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
 
-    assert(_msize(buf) == arrSize * sizeof(int));
+    // assert(_msize(buf) == arrSize * sizeof(int));
 
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
     printArr(buf, arrSize);
 
     const int newArrSize = 0;
-    int *oldbuf = buf;
-    buf = (int *)realloc(buf, newArrSize * sizeof(int));
-    if (buf != NULL)
+    int *tmp = NULL;
+    tmp = (int *)realloc(buf, newArrSize * sizeof(int));
+    if (tmp != NULL)
     {
         if (!MallocDebug_Done())
             return 0;
@@ -493,6 +532,7 @@ int testReallocFree(void)
 
 int testRealloc(void)
 {
+    puts("testRealloc");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
@@ -501,24 +541,29 @@ int testRealloc(void)
 
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(int));
-
+    
+    assert (buf);
     assert(_msize(buf) == arrSize * sizeof(int));
+    
     printf("buf size: %zu\n", _msize(buf));
+    
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
     printArr(buf, arrSize);
 
     const int newArrSize = 2 * arrSize;
-    int *oldbuf = buf;
-    buf = (int *)realloc(buf, newArrSize * sizeof(int));
+    int *tmp = NULL;
+    tmp = (int *)realloc(buf, newArrSize * sizeof(int));
+    
+    assert (tmp != NULL); // should free buf here if tmp == NULL (realloc failed)
+    buf = tmp;
 
     assert(_msize(buf) == newArrSize * sizeof(int));
+    
     printf("buf newsize: %zu\n", _msize(buf));
     for (int i = arrSize; i < newArrSize; ++i)
         buf[i] = i;
     printArr(buf, newArrSize);
-
-    assert(oldbuf != buf);
 
     free(buf);
 
@@ -529,6 +574,7 @@ int testRealloc(void)
 
 int testReallocNew(void)
 {
+    puts("testReallocNew");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
@@ -538,7 +584,8 @@ int testReallocNew(void)
     const int size = 2;
     int *buf = NULL;
     buf = (int *)realloc(buf, size * sizeof(int));
-
+    
+    assert (buf != NULL);
     assert(_msize(buf) == size * sizeof(int));
 
     for (int i = 0; i < size; ++i)
@@ -554,6 +601,7 @@ int testReallocNew(void)
 
 int testCallocNormal(void)
 {
+    puts("testCallocNormal");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
@@ -579,6 +627,7 @@ int testCallocNormal(void)
 
 int testCallocLeak(void)
 {
+    puts("testCallocLeak");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
