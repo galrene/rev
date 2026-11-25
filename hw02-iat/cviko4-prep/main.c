@@ -56,7 +56,7 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
 //     return VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt);
 // }
 
-BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONGLONG newAddr)
+BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
 {    
     pFirstThunk->u1.Function = newAddr;
     // test if IAT's not already unlocked for writing
@@ -106,7 +106,7 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
  * @param newAddr address pointed to by original function after patching
  * @return int number of patched FirstThunks or -1 on error
  */
-int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, ULONGLONG newAddr)
+int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONG_PTR funcAddr, ULONG_PTR newAddr)
 {
     unsigned int patchedCnt = 0;
     // int i = 1;
@@ -143,7 +143,7 @@ int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONGLONG funcAddr, 
  * @param importedDuplicatesMax length of funcImpDescs array
  * @return int number of found import descriptiors
  */
-int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
+int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr)
 {
     unsigned int patchedCnt = 0;
     // iterate dlls
@@ -169,7 +169,7 @@ int patchThunks(char *funcName, ULONGLONG funcAddr, ULONGLONG newAddr)
     return patchedCnt;
 }
 
-BOOL replaceFunc(char *funcName, ULONGLONG funcAddr, ULONGLONG pNewFunc)
+BOOL replaceFunc(char *funcName, ULONG_PTR funcAddr, ULONG_PTR pNewFunc)
 {
     int r = patchThunks(funcName, funcAddr, pNewFunc);
     if (r == UNLOCK_FAILED)
@@ -413,7 +413,7 @@ ULONG_PTR getFuncAddr(char *funcName)
             if (nt[i].u1.AddressOfData == 0)
             {
                 puts("INT shorter than IAT: PE malformed. Stopping...");
-                return 0;
+                exit(2);
             }
 
             if (IMAGE_SNAP_BY_ORDINAL(nt[i].u1.Ordinal))
@@ -457,22 +457,22 @@ BOOL MallocDebug_Init(void)
     g_OrigFree = (FreeFun)getFuncAddr("free");
 
     // todo: replace ULL with something more proper
-    if (!replaceFunc("malloc", (ULONGLONG)g_OrigMalloc, (ULONGLONG)MallocDebug_malloc))
+    if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
     {
         puts("Patching malloc failed.");
         return FALSE;
     }
-    if (!replaceFunc("calloc", (ULONGLONG)g_OrigCalloc, (ULONGLONG)MallocDebug_calloc))
+    if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc))
     {
         puts("Patching calloc failed.");
         return FALSE;
     }
-    if (!replaceFunc("realloc", (ULONGLONG)g_OrigRealloc, (ULONGLONG)MallocDebug_realloc))
+    if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc))
     {
         puts("Patching realloc failed.");
         return FALSE;
     }
-    if (!replaceFunc("free", (ULONGLONG)g_OrigFree, (ULONGLONG)MallocDebug_free))
+    if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free))
     {
         puts("Patching free failed.");
         return FALSE;
@@ -497,25 +497,25 @@ BOOL MallocDebug_Done(void)
 
     // restore original IAT state
     // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
-    if (!replaceFunc("malloc", (ULONGLONG)malloc, (ULONGLONG)g_OrigMalloc))
+    if (!replaceFunc("malloc", (ULONG_PTR)malloc, (ULONG_PTR)g_OrigMalloc))
     {
         puts("Restoring malloc failed.");
         return FALSE;
     }
     g_OrigMalloc = NULL;
-    if (!replaceFunc("calloc", (ULONGLONG)calloc, (ULONGLONG)g_OrigCalloc))
+    if (!replaceFunc("calloc", (ULONG_PTR)calloc, (ULONG_PTR)g_OrigCalloc))
     {
         puts("Restoring calloc failed.");
         return FALSE;
     }
     g_OrigCalloc = NULL;
-    if (!replaceFunc("realloc", (ULONGLONG)realloc, (ULONGLONG)g_OrigRealloc))
+    if (!replaceFunc("realloc", (ULONG_PTR)realloc, (ULONG_PTR)g_OrigRealloc))
     {
         puts("Restoring realloc failed.");
         return FALSE;
     }
     g_OrigRealloc = NULL;
-    if (!replaceFunc("free", (ULONGLONG)free, (ULONGLONG)g_OrigFree))
+    if (!replaceFunc("free", (ULONG_PTR)free, (ULONG_PTR)g_OrigFree))
     {
         puts("Restoring free failed.");
         return FALSE;
