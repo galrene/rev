@@ -22,7 +22,12 @@ potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
 // convert relative virtual address to virtual address (absolute address in memory)
 static void *VA(DWORD rva)
 {
-    BYTE *base = (BYTE *)GetModuleHandle(NULL);
+    static BYTE *base;
+    if (!base)
+    {
+        puts("GetModuleHandle called.");
+        base = (BYTE *)GetModuleHandle(NULL);
+    }
     return base + rva;
 }
 

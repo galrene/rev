@@ -9,7 +9,7 @@ výskyty DWORD jsou relevantní a které ne. Bylo by dobré nadefinovat si
 vlastní typ a ten potom pomocí preprocesoru můžete snadno změnit z DWORD
 na ULONGLONG podle potřeby. Nebo rovnou používat nějaký ukazatel.
 
-RID-116
+RID-116 (FIXED)
 =======
 Voláte GetModuleHandle znovu a znovu pro každé volání VA(). Je to
 nezbytné? Plus jste rovnou mohl i řešit případ, že RVA==0.
