@@ -39,7 +39,6 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
 
 BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
 {    
-    pFirstThunk->u1.Function = newAddr;
     // test if IAT's not already unlocked for writing
     __try {
         // patch function
@@ -501,16 +500,16 @@ BOOL MallocDebug_Done(void)
     if (g_AllocCnt != 0)
     {
         puts("Memory leaks:");
-        BOOL allZero = TRUE;
+        size_t found = 0;
         for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
         {
             if (g_AllocatedMemorySize[i] != 0)
             {
-                allZero = FALSE;
+                ++found;
                 printf("\tLeaked %zu bytes @%p\n", g_AllocatedMemorySize[i], (void *)g_AllocatedMemory[i]);
             }
         }
-        if (allZero)
+        if (found != g_AllocCnt)
             puts("Memory leak of length 0 occurred.");
     }
     else
