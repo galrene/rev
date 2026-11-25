@@ -20,7 +20,7 @@ potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
 */
 
 // convert relative virtual address to virtual address (absolute address in memory)
-static void *VA(DWORD rva)
+static void *VA(ULONG_PTR rva)
 {
     static BYTE *base;
     if (!base)
