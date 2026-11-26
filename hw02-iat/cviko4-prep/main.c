@@ -522,27 +522,51 @@ BOOL MallocDebug_Done(void)
         return FALSE;
     }
 
-    // restore original IAT state
-    // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
-    // skip functions that Init never patched (original not found): restoring them
-    // would write NULL into any IAT entry equal to &malloc etc.
-    if (g_OrigMalloc && !replaceFunc("malloc", (ULONG_PTR)malloc, (ULONG_PTR)g_OrigMalloc))
-        puts("Malloc not restored.");
-    g_OrigMalloc = NULL;
+    // restore original IAT state:
+    // swap every IAT entry Init pointed at MallocDebug_* back to the original.
+    // skip functions that Init never patched (original not found)
+    BOOL allRestored = TRUE;
+    if (g_OrigMalloc)
+    {
+        if (!replaceFunc("malloc", (ULONG_PTR)MallocDebug_malloc, (ULONG_PTR)g_OrigMalloc))
+        {
+            puts("Malloc not restored.");
+            allRestored = FALSE;
+        }
+        g_OrigMalloc = NULL;
+    }
+    if (g_OrigCalloc)
+    {
+        if (!replaceFunc("calloc", (ULONG_PTR)MallocDebug_calloc, (ULONG_PTR)g_OrigCalloc))
+        {
+            puts("Calloc not restored.");
+            allRestored = FALSE;
+        }
+        g_OrigCalloc = NULL;
+    }
+    if (g_OrigRealloc)
+    {
+        if (!replaceFunc("realloc", (ULONG_PTR)MallocDebug_realloc, (ULONG_PTR)g_OrigRealloc))
+        {
+            puts("Realloc not restored.");
+            allRestored = FALSE;
+        }
+        g_OrigRealloc = NULL;
+    }
+    if (g_OrigFree)
+    {
+        if (!replaceFunc("free", (ULONG_PTR)MallocDebug_free, (ULONG_PTR)g_OrigFree))
+        {
+            puts("Free not restored.");
+            allRestored = FALSE;
+        }
+        g_OrigFree = NULL;
+    }
 
-    if (g_OrigCalloc && !replaceFunc("calloc", (ULONG_PTR)calloc, (ULONG_PTR)g_OrigCalloc))
-        puts("Calloc not restored.");
-    g_OrigCalloc = NULL;
-
-    if (g_OrigRealloc && !replaceFunc("realloc", (ULONG_PTR)realloc, (ULONG_PTR)g_OrigRealloc))
-        puts("Realloc not restored.");
-    g_OrigRealloc = NULL;
-
-    if (g_OrigFree && !replaceFunc("free", (ULONG_PTR)free, (ULONG_PTR)g_OrigFree))
-        puts("Free not restored.");
-    g_OrigFree = NULL;
-
-    puts("Original IAT restored.");
+    if (allRestored)
+        puts("Original IAT restored.");
+    else
+        puts("Original IAT only partially restored.");
 
     // print memory leaks
     if (g_AllocCnt != 0)
