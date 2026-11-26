@@ -21,9 +21,12 @@ potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
 */
 
 // convert relative virtual address to virtual address (absolute address in memory)
+// RVA 0 means "not present" in PE structures, returns NULL instead of the image base
 static void *VA(ULONG_PTR rva)
 {
     static BYTE *base;
+    if (rva == 0)
+        return NULL;
     if (!base)
     {
         base = (BYTE *)GetModuleHandle(NULL);
@@ -36,6 +39,8 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     HMODULE hPEFile = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
+    if (!pNTHeaders)
+        return NULL;    // malformed, no NT headers
 
     IMAGE_DATA_DIRECTORY *dir =
         &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
@@ -51,7 +56,9 @@ PIMAGE_IMPORT_DESCRIPTOR getImpDescEnd(void)
     HMODULE hPEFile = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
-    
+    if (!pNTHeaders)
+        return NULL;    // malformed, no NT headers
+
     IMAGE_DATA_DIRECTORY *dir =
         &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (dir->VirtualAddress == 0 || dir->Size == 0)
@@ -94,8 +101,8 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
         if (!VirtualProtect(t, pBytes, pOldProt, &rePerms))
         {
             DWORD r = GetLastError();
-            printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
-            return FALSE;
+            printf("Restoring FirstThunk permissions failed, but function has been patched.\n Error: %d\n", r);
+            return TRUE;
         }
     }
 
@@ -152,6 +159,8 @@ unsigned int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr, 
     // iterate dlls
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
     PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
+    if (!pImportDesc)
+        return 0;   // no import directory
 
     for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
@@ -439,6 +448,8 @@ ULONG_PTR getFuncAddr(char *funcName)
 {
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
     PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
+    if (!pImportDesc)
+        return 0;   // no import directory
     // iterate import descriptors (dlls)
     for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
