@@ -1,4 +1,4 @@
-RID-115
+RID-115 (FIXED)
 =======
  Obecně, v kódu tohoto typu je trochu nešikovné používat DWORD pro
 ukládání dat nebo jejich přetypování. Problém je, že když pak stejný
@@ -32,7 +32,7 @@ ukončíte nahrazování. Co vy víte, třeba budete mít kliku a IAT bude
 zapisovatelná už sama o sobě, takže na chybě ve volání VirtualProtect
 nebude záležet.
 
-RID-102
+RID-102 (FIXED)
 =======
 Bylo by vhodné, kdybyste se ve smyčce přes všechny import descriptory
 nespoléhal jen na prvek Characteristics, ale zahrnul do kontrol také
@@ -41,6 +41,8 @@ ověřovat všechny vstupy co nejdůsledněji. Co když náhodou ta data na
 sebe hrát nebudou, třeba nebude v programu ten ukončovací vynulovaný
 deskriptor? [-1 b.]
 
+RID-118 (OPEN)
+=======
 Nahrazujete úplně všechny funkce s daným jménem ve všech modulech. Třeba
 u funkce "free" se dá docela dobře očekávat, že existuje v mnoha různých
 DLL a v každé má jinou funkci. Nahradit ji všude je velmi rizikové. Měl
@@ -213,30 +215,14 @@ závažná chyba v celé logice úlohy. [-3 b.]
 SELF-RIDS
 =========
 
-reply to RID-103
-say i dont understand RID-115
-
-RID-11
+RID-11 (FIXED)
 ------
 Skontroluj vsetky cases ked su zero length alokacie a moze byt returned NULL alebo zero length mem ptr.
 
-TODO MALLOC
-DONE FOR REALLOC
-TODO CALLOC
-
-NOTE FOR CALLOC
-Yes. If either argument is 0 (calloc(0, n) or calloc(n, 0)), the total size is 0,
-and the standard gives the same implementation-defined choice as for malloc(0): it returns
-either NULL or a unique non-NULL pointer that you must not dereference.
-
-MSVC UCRT: it turns the size into 1 and returns a non-NULL zero-length block, so it must be freed.
-glibc: it returns a non-NULL minimum-size chunk.
-
-So the same two cases apply, and free(p) handles both.
-
-One difference from malloc: calloc checks whether nmemb * size overflows and returns NULL if it does.
-malloc(nmemb * size) silently wraps and can allocate a block that's too small.
-
-RID-12
+RID-13
 ------
-Uprav patchThunks iteraciu podla (opravenej) getFuncAddr iteracie.
+Skontroluj ako sa chovaju funkcie ked zlyhaju.
+
+MALLOC  OK - vracia NULL
+REALLOC OK - vracia NULL
+CALLOC OK - vracia NULL vraj (msdn doesnt explicitly say so)

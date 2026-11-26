@@ -270,6 +270,17 @@ void MallocDebug_free(void *ptr)
  * @param number number of elements
  * @param size length in bytes of each element
  * @return void* pointer to allocated space
+ * 
+ * 
+ * cases:
+ * 1. (number = 0, size = 0)
+ * 2. (number = 0, size > 0)
+ * 3. (number > 0, size = 0) 
+ * 1 - 3: In the Microsoft implementation, if number or size is zero, calloc returns
+ * a pointer to an allocated block of non-zero size.
+ * An attempt to read or write through the returned pointer leads to undefined behavior.
+ * 
+ * 4. (number > 0, size > 0) standard operation
  */
 void *MallocDebug_calloc(size_t number, size_t size)
 {
@@ -289,7 +300,6 @@ void *MallocDebug_calloc(size_t number, size_t size)
         puts("Calloc called with either of args equal to 0, read or write to returned mem is UB");
 
     void *buf = g_OrigCalloc(number, size);
-    
     if (buf == NULL)
     {
         puts("Not enough space on the heap for new allocations.");
@@ -765,10 +775,53 @@ int testCallocLeak(void)
     return 1;
 }
 
+int testMallocZeroLeak (void)
+{
+    puts("testMallocZero");
+    if (!MallocDebug_Init())
+    {
+        puts("Init failed.");
+        return 0;
+    }
+    
+    int *buf = malloc(0);
+
+    int *tmp = realloc(buf, 128);
+    assert (tmp != NULL);
+    buf = tmp;
+
+    if (!MallocDebug_Done())
+        return 0;
+    return 1;
+}
+
+int testMallocZero (void)
+{
+    puts("testMallocZero");
+    if (!MallocDebug_Init())
+    {
+        puts("Init failed.");
+        return 0;
+    }
+    
+    int *buf = malloc(0);
+
+    int *tmp = realloc(buf, 127);
+    assert (tmp != NULL);
+    buf = tmp;
+
+    free(buf);
+
+    if (!MallocDebug_Done())
+        return 0;
+    return 1;
+}
+
 int main(void)
 {
-    // void *(*g_OrigMalloc)(size_t) = NULL;          // void * malloc(size)
-    // printf("%p\n%p\n", g_OrigMalloc, malloc);
+    assert(testMallocZero() == 1);
+    assert(testMallocZeroLeak() == 1);
+    
     assert(testRealloc() == 1);
     assert(testReallocNew() == 1);
     assert(testReallocFree() == 1);
