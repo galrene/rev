@@ -440,8 +440,8 @@ ULONG_PTR getFuncAddr(char *funcName)
 
             if (nt[i].u1.AddressOfData == 0)
             {
-                puts("INT shorter than IAT: PE malformed. Stopping...");
-                exit(2);
+                puts("INT shorter than IAT. Malformed, skipping import descriptor.");
+                break;
             }
 
             if (IMAGE_SNAP_BY_ORDINAL(nt[i].u1.Ordinal))
