@@ -157,10 +157,18 @@ int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr)
 
     for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
     {
+        // no import name table
+        if (!pImportDesc->OriginalFirstThunk)
+            continue;
+
         // iterate dll's imported functions
         for (PIMAGE_THUNK_DATA pOriginalFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk));
              pOriginalFirstThunk->u1.AddressOfData != 0; ++pOriginalFirstThunk)
         {
+            // ignore ordinal imports
+            if (IMAGE_SNAP_BY_ORDINAL(pOriginalFirstThunk->u1.Ordinal))
+                continue;
+
             PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(VA(pOriginalFirstThunk->u1.AddressOfData));
             // find searched function by name
             if (strcmp(funcName, pImportByName->Name) == 0)
