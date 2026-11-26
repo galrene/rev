@@ -102,36 +102,31 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
     return TRUE;
 }
 
-#define UNLOCK_FAILED -1
-
 /**
  * @brief Find the func's address in FirstThunk, replace with newAddr.
+ * A FirstThunk that can't be patched is counted in *pFailedCnt and skipped;
+ * the remaining ones are still patched.
  * @param pImportDesc import descriptor containing function addresses to be patched
  * @param funcAddr adddress of function to patch
  * @param newAddr address pointed to by original function after patching
- * @return int number of patched FirstThunks or -1 on error
+ * @param pFailedCnt (out param) incremented for every FirstThunk that couldn't be patched
+ * @return number of patched FirstThunks
  */
-int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONG_PTR funcAddr, ULONG_PTR newAddr)
+unsigned int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONG_PTR funcAddr, ULONG_PTR newAddr,
+                               unsigned int *pFailedCnt)
 {
     unsigned int patchedCnt = 0;
-    // int i = 1;
-    // puts("Thunk BEGIN");
-    // printf("Searched address: %lld\n", funcAddr);
     for (PIMAGE_THUNK_DATA pFirstThunk = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
          pFirstThunk->u1.Function != 0ULL; ++pFirstThunk)
     {
-        // printf("%d. %lld", i, pFirstThunk->u1.Function);
         if (funcAddr == pFirstThunk->u1.Function)
         {
-            if (!patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
-                return UNLOCK_FAILED;
-            patchedCnt++;
-            // printf("------>%lld", newAddr);
+            if (patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
+                patchedCnt++;
+            else
+                (*pFailedCnt)++;
         }
-        // puts("");
-        // ++i;
     }
-    // puts("Thunk END");
     return patchedCnt;
 }
 
@@ -143,12 +138,15 @@ int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONG_PTR funcAddr, 
  * Each imported .dll is represented by a single IMAGE_IMPORT_DESCRIPTOR.
  * Each FirstThunk points to a segment of IAT belonging to given .dll
  *
+ * A failure in one descriptor doesn't stop the others from being patched.
+ *
  * @param funcName name of searched function
- * @param funcImpDescs (out param) pointer to an arry of PIMAGE_IMPORT_DESCRIPTORs
- * @param importedDuplicatesMax length of funcImpDescs array
- * @return int number of found import descriptiors
+ * @param funcAddr address currently in the FirstThunks to be replaced
+ * @param newAddr address to write instead
+ * @param pFailedCnt (out param) incremented for every FirstThunk that couldn't be patched
+ * @return number of patched FirstThunks
  */
-int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr)
+unsigned int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr, unsigned int *pFailedCnt)
 {
     unsigned int patchedCnt = 0;
     // iterate dlls
@@ -174,22 +172,27 @@ int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr)
             if (strcmp(funcName, pImportByName->Name) == 0)
             {
                 // .dll contains searched function, patch all FirstThunks matching its address
-                int ret = patchThunksOfFunc(pImportDesc, funcAddr, newAddr);
-                if (ret == UNLOCK_FAILED)
-                    return UNLOCK_FAILED;
-                patchedCnt += ret;
+                patchedCnt += patchThunksOfFunc(pImportDesc, funcAddr, newAddr, pFailedCnt);
             }
         }
     }
     return patchedCnt;
 }
 
-BOOL replaceFunc(char *funcName, ULONG_PTR funcAddr, ULONG_PTR pNewFunc)
+// returns TRUE only if at least one FirstThunk was patched and none failed
+// pPatchedCnt (optional, may be NULL) receives the number of FirstThunks patched
+BOOL replaceFunc(char *funcName, ULONG_PTR funcAddr, ULONG_PTR pNewFunc, unsigned int *pPatchedCnt)
 {
-    int r = patchThunks(funcName, funcAddr, pNewFunc);
-    if (r == UNLOCK_FAILED)
+    unsigned int failedCnt = 0;
+    unsigned int patchedCnt = patchThunks(funcName, funcAddr, pNewFunc, &failedCnt);
+    if (pPatchedCnt)
+        *pPatchedCnt = patchedCnt;
+    if (failedCnt != 0)
+    {
+        printf("%s: %u FirstThunk(s) patched, %u could not be patched.\n", funcName, patchedCnt, failedCnt);
         return FALSE;
-    if (r == 0)
+    }
+    if (patchedCnt == 0)
     {
         printf("No FirstThunks for %s to be patched found.\n", funcName);
         return FALSE;
@@ -210,6 +213,12 @@ static MallocFun g_OrigMalloc = NULL;
 static CallocFun g_OrigCalloc = NULL;
 static ReallocFun g_OrigRealloc = NULL;
 static FreeFun g_OrigFree = NULL;
+
+// number of FirstThunks Init pointed at MallocDebug_*, so Done only restores what was patched
+static unsigned int g_MallocPatchedCnt = 0;
+static unsigned int g_CallocPatchedCnt = 0;
+static unsigned int g_ReallocPatchedCnt = 0;
+static unsigned int g_FreePatchedCnt = 0;
 
 #define ALLOCATIONS_MAX 50
 
@@ -496,22 +505,22 @@ BOOL MallocDebug_Init(void)
     // so MallocDebug_* never calls a NULL g_Orig*
     if (!g_OrigMalloc)
         puts("malloc not found in IAT, not patching it.");
-    else if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
+    else if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc, &g_MallocPatchedCnt))
         puts("Malloc not patched.");
 
     if (!g_OrigCalloc)
         puts("calloc not found in IAT, not patching it.");
-    else if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc))
+    else if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc, &g_CallocPatchedCnt))
         puts("Calloc not patched.");
 
     if (!g_OrigRealloc)
         puts("realloc not found in IAT, not patching it.");
-    else if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc))
+    else if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc, &g_ReallocPatchedCnt))
         puts("Realloc not patched.");
 
     if (!g_OrigFree)
         puts("free not found in IAT, not patching it.");
-    else if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free))
+    else if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free, &g_FreePatchedCnt))
         puts("Free not patched.");
     puts("+++++++++++++++++++++++++++++++++++++++");
     puts("revgrind init");
@@ -533,44 +542,38 @@ BOOL MallocDebug_Done(void)
 
     // restore original IAT state:
     // swap every IAT entry Init pointed at MallocDebug_* back to the original.
-    // skip functions that Init never patched (original not found)
+    // skip functions where Init patched nothing (original not found or every patch failed),
+    // their IAT entries still hold the original
     BOOL allRestored = TRUE;
-    if (g_OrigMalloc)
+    if (g_MallocPatchedCnt != 0 &&
+        !replaceFunc("malloc", (ULONG_PTR)MallocDebug_malloc, (ULONG_PTR)g_OrigMalloc, NULL))
     {
-        if (!replaceFunc("malloc", (ULONG_PTR)MallocDebug_malloc, (ULONG_PTR)g_OrigMalloc))
-        {
-            puts("Malloc not restored.");
-            allRestored = FALSE;
-        }
-        g_OrigMalloc = NULL;
+        puts("Malloc not restored.");
+        allRestored = FALSE;
     }
-    if (g_OrigCalloc)
+    if (g_CallocPatchedCnt != 0 &&
+        !replaceFunc("calloc", (ULONG_PTR)MallocDebug_calloc, (ULONG_PTR)g_OrigCalloc, NULL))
     {
-        if (!replaceFunc("calloc", (ULONG_PTR)MallocDebug_calloc, (ULONG_PTR)g_OrigCalloc))
-        {
-            puts("Calloc not restored.");
-            allRestored = FALSE;
-        }
-        g_OrigCalloc = NULL;
+        puts("Calloc not restored.");
+        allRestored = FALSE;
     }
-    if (g_OrigRealloc)
+    if (g_ReallocPatchedCnt != 0 &&
+        !replaceFunc("realloc", (ULONG_PTR)MallocDebug_realloc, (ULONG_PTR)g_OrigRealloc, NULL))
     {
-        if (!replaceFunc("realloc", (ULONG_PTR)MallocDebug_realloc, (ULONG_PTR)g_OrigRealloc))
-        {
-            puts("Realloc not restored.");
-            allRestored = FALSE;
-        }
-        g_OrigRealloc = NULL;
+        puts("Realloc not restored.");
+        allRestored = FALSE;
     }
-    if (g_OrigFree)
+    if (g_FreePatchedCnt != 0 &&
+        !replaceFunc("free", (ULONG_PTR)MallocDebug_free, (ULONG_PTR)g_OrigFree, NULL))
     {
-        if (!replaceFunc("free", (ULONG_PTR)MallocDebug_free, (ULONG_PTR)g_OrigFree))
-        {
-            puts("Free not restored.");
-            allRestored = FALSE;
-        }
-        g_OrigFree = NULL;
+        puts("Free not restored.");
+        allRestored = FALSE;
     }
+    g_MallocPatchedCnt = g_CallocPatchedCnt = g_ReallocPatchedCnt = g_FreePatchedCnt = 0;
+    g_OrigMalloc = NULL;
+    g_OrigCalloc = NULL;
+    g_OrigRealloc = NULL;
+    g_OrigFree = NULL;
 
     if (allRestored)
         puts("Original IAT restored.");
