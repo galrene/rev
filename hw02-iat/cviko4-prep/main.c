@@ -13,13 +13,6 @@
 // compile and run in powershell version that doesn't support && operator :))
 // cl /MD main.c; if ($LASTEXITCODE -eq 0) { .\main.exe }
 
-/**
-PRISTUP
-=======
-Najdem img import descriptor (.dll) cez meno (v OGFirstThunkoch)
-potom v nom hladam podla adresy moju funkciu vo FirstThunkoch, nahradim.
-*/
-
 // convert relative virtual address to virtual address (absolute address in memory)
 // RVA 0 means "not present" in PE structures, returns NULL instead of the image base
 static void *VA(ULONG_PTR rva)
@@ -618,6 +611,14 @@ BOOL MallocDebug_Done(void)
     return TRUE;
 }
 
+// report a failed allocation in a test, end the revgrind session, fail the test
+int failTest(const char *msg)
+{
+    puts(msg);
+    MallocDebug_Done();
+    return 0;
+}
+
 void printArr(int *arr, size_t size)
 {
     for (int i = 0; i < size; ++i)
@@ -636,6 +637,8 @@ int testReallocFree(void)
 
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(*buf));
+    if (!buf)
+        return failTest("malloc failed.");
 
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -666,8 +669,8 @@ int testRealloc(void)
 
     const int arrSize = 4;
     int *buf = (int *)malloc(arrSize * sizeof(*buf));
-    
-    assert (buf);
+    if (!buf)
+        return failTest("malloc failed.");
     
     for (int i = 0; i < arrSize; ++i)
         buf[i] = i;
@@ -677,7 +680,11 @@ int testRealloc(void)
     int *tmp = NULL;
     tmp = (int *)realloc(buf, newArrSize * sizeof(*tmp));
     
-    assert (tmp != NULL); // should free buf here if tmp == NULL (realloc failed)
+    if (!tmp)
+    {
+        free(buf); // realloc failed, buf is still allocated
+        return failTest("realloc failed.");
+    }
     buf = tmp;
 
     for (int i = arrSize; i < newArrSize; ++i)
@@ -703,8 +710,8 @@ int testReallocNew(void)
     const int size = 2;
     int *buf = NULL;
     buf = (int *)realloc(buf, size * sizeof(*buf));
-    
-    assert (buf != NULL);
+    if (!buf)
+        return failTest("realloc failed.");
 
     for (int i = 0; i < size; ++i)
         buf[i] = i;
@@ -728,8 +735,8 @@ int testReallocZero(void)
 
     puts("Allocating 0 length buffer");
     int * buf = (int *)realloc(NULL, 0);
-    
-    assert (buf != NULL);
+    if (!buf)
+        return failTest("realloc failed.");
 
     free(buf);
 
@@ -749,8 +756,8 @@ int testReallocZeroLeak(void)
 
     puts("Allocating 0 length buffer");
     int * buf = (int *)realloc(NULL, 0);
-    
-    assert (buf != NULL);
+    if (!buf)
+        return failTest("realloc failed.");
 
     if (!MallocDebug_Done())
         return 0;
@@ -768,14 +775,18 @@ int testReallocZeroReallocAgain(void)
 
     puts("Allocating 0 length buffer");
     int * buf = (int *)realloc(NULL, 0);
-    
-    assert (buf != NULL);
+    if (!buf)
+        return failTest("realloc failed.");
 
     puts("Reallocating 0 length buffer into a larger one");
     const int arrSize = 8;
     int * tmp = NULL;
     tmp = (int *)realloc(buf, arrSize * sizeof(*tmp));
-    assert (tmp != NULL);
+    if (!tmp)
+    {
+        free(buf);
+        return failTest("realloc failed.");
+    }
     buf = tmp;
     
     for (int i = 0; i < arrSize; ++i)
@@ -800,6 +811,8 @@ int testCallocNormal(void)
 
     const int size = 9;
     int *buf = calloc(size, sizeof(*buf));
+    if (!buf)
+        return failTest("calloc failed.");
 
     printArr(buf, size);
 
@@ -823,6 +836,8 @@ int testCallocLeak(void)
     }
     const int size = 9;
     int *buf = calloc(size, sizeof(*buf));
+    if (!buf)
+        return failTest("calloc failed.");
 
     printArr(buf, size);
     if (!MallocDebug_Done())
@@ -842,7 +857,11 @@ int testMallocZeroLeak (void)
     int *buf = malloc(0);
 
     int *tmp = realloc(buf, 128);
-    assert (tmp != NULL);
+    if (!tmp)
+    {
+        free(buf);
+        return failTest("realloc failed.");
+    }
     buf = tmp;
 
     if (!MallocDebug_Done())
@@ -862,7 +881,11 @@ int testMallocZero (void)
     int *buf = malloc(0);
 
     int *tmp = realloc(buf, 127);
-    assert (tmp != NULL);
+    if (!tmp)
+    {
+        free(buf);
+        return failTest("realloc failed.");
+    }
     buf = tmp;
 
     free(buf);
@@ -876,7 +899,7 @@ int main(void)
 {
     assert(testMallocZero() == 1);
     assert(testMallocZeroLeak() == 1);
-    
+
     assert(testRealloc() == 1);
     assert(testReallocNew() == 1);
     assert(testReallocFree() == 1);
