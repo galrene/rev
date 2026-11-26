@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <windows.h>
 #include <winuser.h>
 #include <assert.h>
@@ -584,10 +585,10 @@ BOOL MallocDebug_Done(void)
     {
         puts("No memory leaked.");
     }
-    // todo not sure if i need to clean this up?
-    // zero g_AllocatedMemory
-    // zero g_AllocatedMemorySize
-    // g_AllocCnt = 0;
+    // clear the log so the next Init/Done session starts empty
+    memset(g_AllocatedMemory, 0, sizeof(g_AllocatedMemory));
+    memset(g_AllocatedMemorySize, 0, sizeof(g_AllocatedMemorySize));
+    g_AllocCnt = 0;
     g_RevgrindInitialised = FALSE;
     puts("---------------------------------------");
     puts("revgrind done");
