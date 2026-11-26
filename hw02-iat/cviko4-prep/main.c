@@ -483,22 +483,27 @@ BOOL MallocDebug_Init(void)
     g_OrigRealloc = (ReallocFun)getFuncAddr("realloc");
     g_OrigFree = (FreeFun)getFuncAddr("free");
 
-    if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
-    {
+    // patch only functions whose original was found in the IAT,
+    // so MallocDebug_* never calls a NULL g_Orig*
+    if (!g_OrigMalloc)
+        puts("malloc not found in IAT, not patching it.");
+    else if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
         puts("Malloc not patched.");
-    }
-    if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc))
-    {
+
+    if (!g_OrigCalloc)
+        puts("calloc not found in IAT, not patching it.");
+    else if (!replaceFunc("calloc", (ULONG_PTR)g_OrigCalloc, (ULONG_PTR)MallocDebug_calloc))
         puts("Calloc not patched.");
-    }
-    if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc))
-    {
+
+    if (!g_OrigRealloc)
+        puts("realloc not found in IAT, not patching it.");
+    else if (!replaceFunc("realloc", (ULONG_PTR)g_OrigRealloc, (ULONG_PTR)MallocDebug_realloc))
         puts("Realloc not patched.");
-    }
-    if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free))
-    {
+
+    if (!g_OrigFree)
+        puts("free not found in IAT, not patching it.");
+    else if (!replaceFunc("free", (ULONG_PTR)g_OrigFree, (ULONG_PTR)MallocDebug_free))
         puts("Free not patched.");
-    }
     puts("+++++++++++++++++++++++++++++++++++++++");
     puts("revgrind init");
     puts("+++++++++++++++++++++++++++++++++++++++");
@@ -519,25 +524,22 @@ BOOL MallocDebug_Done(void)
 
     // restore original IAT state
     // replace malloc (now Debug_malloc) with gOrigMalloc (malloc), etc.
-    if (!replaceFunc("malloc", (ULONG_PTR)malloc, (ULONG_PTR)g_OrigMalloc))
-    {
+    // skip functions that Init never patched (original not found): restoring them
+    // would write NULL into any IAT entry equal to &malloc etc.
+    if (g_OrigMalloc && !replaceFunc("malloc", (ULONG_PTR)malloc, (ULONG_PTR)g_OrigMalloc))
         puts("Malloc not restored.");
-    }
     g_OrigMalloc = NULL;
-    if (!replaceFunc("calloc", (ULONG_PTR)calloc, (ULONG_PTR)g_OrigCalloc))
-    {
+
+    if (g_OrigCalloc && !replaceFunc("calloc", (ULONG_PTR)calloc, (ULONG_PTR)g_OrigCalloc))
         puts("Calloc not restored.");
-    }
     g_OrigCalloc = NULL;
-    if (!replaceFunc("realloc", (ULONG_PTR)realloc, (ULONG_PTR)g_OrigRealloc))
-    {
+
+    if (g_OrigRealloc && !replaceFunc("realloc", (ULONG_PTR)realloc, (ULONG_PTR)g_OrigRealloc))
         puts("Realloc not restored.");
-    }
     g_OrigRealloc = NULL;
-    if (!replaceFunc("free", (ULONG_PTR)free, (ULONG_PTR)g_OrigFree))
-    {
+
+    if (g_OrigFree && !replaceFunc("free", (ULONG_PTR)free, (ULONG_PTR)g_OrigFree))
         puts("Free not restored.");
-    }
     g_OrigFree = NULL;
 
     puts("Original IAT restored.");
