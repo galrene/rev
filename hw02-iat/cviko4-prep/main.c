@@ -208,35 +208,47 @@ ULONG_PTR g_AllocatedMemory[ALLOCATIONS_MAX] = {0};
 size_t g_AllocatedMemorySize[ALLOCATIONS_MAX] = {0};
 size_t g_AllocCnt = 0;
 BOOL g_RevgrindInitialised = FALSE;
-/**
- * loguju:
- * 1. pamat sa alokovala
- * 2. velkost alokovanej pamate
- */
-void *MallocDebug_malloc(size_t size)
+
+BOOL isTracked(void * memblock)
 {
-    if (g_AllocCnt >= ALLOCATIONS_MAX)
+    if (! memblock)
+        return FALSE;
+    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
     {
-        puts("Maximum allocations reached, not allocating anything.");
-        return NULL;
+        if (g_AllocatedMemory[i] == (ULONG_PTR)memblock)
+        {
+            return TRUE;
+        }
     }
+    return FALSE;
+}
 
-    void *ptr = g_OrigMalloc(size);
-    if (!ptr) 
+// find first free slot and add to to the debug memory representation
+// returns true on success, false on table full
+BOOL addMem(void* memblock, size_t size)
+{
+    for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
     {
-        puts("Not enough space on the heap for new allocations.");
-        return NULL;  
-    }
-    g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)ptr;
-    g_AllocatedMemorySize[g_AllocCnt++] = size;
 
-    printf("Allocated %zu bytes @%p\n", size, ptr);
-    return ptr;
+        if (g_AllocatedMemory[i] == 0)
+        {
+            g_AllocatedMemory[i] = (ULONG_PTR)memblock;
+            g_AllocatedMemorySize[i] = size;
+            ++g_AllocCnt;
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 // remove memory from the DEBUG representation
 BOOL removeMem(void* memblock)
 {
+    if (memblock == NULL)
+    {
+        return FALSE;
+    }
+
     for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
     {
         if (g_AllocatedMemory[i] == (ULONG_PTR) memblock)
@@ -248,9 +260,29 @@ BOOL removeMem(void* memblock)
         }
     }
 
-    printf("Requested memory @(%p) isn't allocated\n\
-        - already freed or never allocated within revgrind init & done block.\n", memblock);
     return FALSE;
+}
+
+/**
+ * loguju:
+ * 1. pamat sa alokovala
+ * 2. velkost alokovanej pamate
+ */
+void *MallocDebug_malloc(size_t size)
+{
+    void *ptr = g_OrigMalloc(size);
+    if (!ptr) 
+    {
+        puts("Not enough space on the heap for new allocations.");
+        return NULL;  
+    }
+    if (! addMem(ptr, size))
+    {
+        printf("Maximum debug allocations reached, not tracking block @%p.\n", ptr);
+    }
+
+    printf("Allocated %zu bytes @%p\n", size, ptr);
+    return ptr;
 }
 
 /**
@@ -261,7 +293,12 @@ BOOL removeMem(void* memblock)
 void MallocDebug_free(void *ptr)
 {
     printf("Freeing memory @%p\n", ptr);
-    removeMem(ptr);
+    if (ptr)
+    {
+        if ( ! removeMem(ptr) )
+            printf("Requested memory @(%p) isn't allocated\n\
+            - already freed or never allocated within revgrind init & done block.\n", ptr);
+    }
     g_OrigFree(ptr);
 }
 /**
@@ -284,11 +321,6 @@ void MallocDebug_free(void *ptr)
  */
 void *MallocDebug_calloc(size_t number, size_t size)
 {
-    if (g_AllocCnt >= ALLOCATIONS_MAX)
-    {
-        printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
-        return NULL;
-    }
     /*
     In the Microsoft implementation, if number or size is zero,
     calloc returns a pointer to an allocated block of non-zero size.
@@ -307,8 +339,10 @@ void *MallocDebug_calloc(size_t number, size_t size)
     }
     
     printf("Allocated memory @%p\n", buf);
-    g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)buf;
-    g_AllocatedMemorySize[g_AllocCnt++] = size * number;
+    if (! addMem(buf, size * number))
+    {
+        printf("Maximum debug allocations reached, not tracking block @%p.\n", buf);
+    }
 
     return buf;
 }
@@ -334,21 +368,10 @@ tldr 4 cases:
       sometimes returns NULL (doesn't need freeing)
 */
 void *MallocDebug_realloc(void *memblock, size_t size)
-{
-    // allow reallocation (enlargmenet of an existing array) when max allocations have been reached,
-    // but do not allow allocating previously unalloced memory (thus surpassing the max allocations amount)
+{    
+    if (memblock && !isTracked(memblock))
+        printf("Realloc of an untracked block @%p, may crash.\n", memblock);
     
-    // 1. reallocate existing memory (memblock != NULL && size != 0)
-    // 2. free existing memory       (memblock != NULL && size == 0)
-    // 3. allocate new memory        (memblock == NULL && size != 0)
-    // 4. implementation dependant   (memblock == NULL && size == 0)
-    // match on all except free
-    if (size >= 0 && g_AllocCnt >= ALLOCATIONS_MAX && memblock == NULL)
-    {
-        printf("Maximum allocations of %d reached, not allocating anything.\n", ALLOCATIONS_MAX);
-        return NULL;
-    }
-
     void *newMem = g_OrigRealloc(memblock, size);
 
     if (newMem == NULL && size != 0) // in case size == 0, we're expecting exactly NULL
@@ -358,7 +381,7 @@ void *MallocDebug_realloc(void *memblock, size_t size)
     }
     
     // case 4, realloc has allocated a zero length memory block, warn the user
-    if (newMem && memblock == NULL && size == 0)
+    if (newMem && !memblock && size == 0)
         puts("realloc has allocated a zero length memory block, writing and reading it may crash the program.");
     
     // 1. reallocate existing memory (memblock != NULL && size != 0)
@@ -367,14 +390,8 @@ void *MallocDebug_realloc(void *memblock, size_t size)
     // 4. implementation dependant   (memblock == NULL && size == 0)
     // match relocation and freeing
     // remove block from memory representation
-    if (memblock != NULL) {
-        BOOL r = FALSE;
-        r = removeMem(memblock);
-        if (!r) {
-            puts("Memory representation inconsisnent.");
-            exit(1);
-        }
-    }
+    if (memblock)
+        removeMem(memblock);
 
     // debug printouts
     if (memblock && size) // memblock == NULL means we're allocating new memory
@@ -384,15 +401,10 @@ void *MallocDebug_realloc(void *memblock, size_t size)
     else
         printf("Allocated memory @%p of size %zu\n", newMem, size);
     
-    // 1. reallocate existing memory (memblock != NULL && size != 0)
-    // 2. free existing memory       (memblock != NULL && size == 0)
-    // 3. allocate new memory        (memblock == NULL && size != 0)
-    // 4. implementation dependant   (memblock == NULL && size == 0)
-    // match every case except freeing memory AND check 4. case if this impl. returned non-NULL
-    if ((! (memblock != NULL && size == 0) ) && newMem)
+    // log all non-NULL returns
+    if (newMem && !addMem(newMem, size))
     {
-        g_AllocatedMemory[g_AllocCnt] = (ULONG_PTR)newMem;
-        g_AllocatedMemorySize[g_AllocCnt++] = size;
+        printf("Maximum debug allocations reached, not tracking block @%p.\n", newMem);
     }
 
     return newMem;
@@ -534,17 +546,13 @@ BOOL MallocDebug_Done(void)
     if (g_AllocCnt != 0)
     {
         puts("Memory leaks:");
-        size_t found = 0;
         for (size_t i = 0; i < ALLOCATIONS_MAX; ++i)
         {
-            if (g_AllocatedMemorySize[i] != 0)
+            if (g_AllocatedMemory[i] != 0)
             {
-                ++found;
                 printf("\tLeaked %zu bytes @%p\n", g_AllocatedMemorySize[i], (void *)g_AllocatedMemory[i]);
             }
         }
-        if (found != g_AllocCnt)
-            puts("Memory leak of length 0 occurred.");
     }
     else
     {
@@ -775,7 +783,7 @@ int testCallocLeak(void)
 
 int testMallocZeroLeak (void)
 {
-    puts("testMallocZero");
+    puts("testMallocZeroLeak");
     if (!MallocDebug_Init())
     {
         puts("Init failed.");
