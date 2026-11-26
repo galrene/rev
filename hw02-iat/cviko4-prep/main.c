@@ -104,7 +104,7 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
 #define UNLOCK_FAILED -1
 
 /**
- * @brief Find the func's address in FirstThunk, replace with newAddr. Can by retrieved by ordinal as well (TODO).
+ * @brief Find the func's address in FirstThunk, replace with newAddr.
  * @param pImportDesc import descriptor containing function addresses to be patched
  * @param funcAddr adddress of function to patch
  * @param newAddr address pointed to by original function after patching
@@ -466,13 +466,11 @@ BOOL MallocDebug_Init(void)
     g_RevgrindInitialised = TRUE;
 
     // backup original function addresses
-    // todo: if fun not used, it stays null, which is ok?
     g_OrigMalloc = (MallocFun)getFuncAddr("malloc");
     g_OrigCalloc = (CallocFun)getFuncAddr("calloc");
     g_OrigRealloc = (ReallocFun)getFuncAddr("realloc");
     g_OrigFree = (FreeFun)getFuncAddr("free");
 
-    // todo: replace ULL with something more proper
     if (!replaceFunc("malloc", (ULONG_PTR)g_OrigMalloc, (ULONG_PTR)MallocDebug_malloc))
     {
         puts("Malloc not patched.");
