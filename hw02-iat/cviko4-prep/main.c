@@ -27,10 +27,15 @@ static void *VA(ULONG_PTR rva)
     return base + rva;
 }
 
-PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
+/**
+ * @brief Get the import directory: first import descriptor and the end of the directory.
+ * @param ppEnd (out param) first byte past the import directory (bound for the descriptor loop)
+ * @return first import descriptor, NULL when there are no imports or the PE is malformed
+ */
+PIMAGE_IMPORT_DESCRIPTOR getImportDescs(PIMAGE_IMPORT_DESCRIPTOR *ppEnd)
 {
-    HMODULE hPEFile = GetModuleHandle(NULL);
-    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
+    *ppEnd = NULL;
+    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
     PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
     if (!pNTHeaders)
         return NULL;    // malformed, no NT headers
@@ -38,32 +43,15 @@ PIMAGE_IMPORT_DESCRIPTOR getFirstImpDesc(void)
     IMAGE_DATA_DIRECTORY *dir =
         &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (dir->VirtualAddress == 0 || dir->Size == 0)
-        return 0;   // no imports
-    
+        return NULL;    // no imports
+
     PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)VA(dir->VirtualAddress);
+    *ppEnd = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)pImportDesc + dir->Size);
     return pImportDesc;
 }
 
-PIMAGE_IMPORT_DESCRIPTOR getImpDescEnd(void)
+BOOL patchFirstThunk(PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
 {
-    HMODULE hPEFile = GetModuleHandle(NULL);
-    PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hPEFile;
-    PIMAGE_NT_HEADERS pNTHeaders = (PIMAGE_NT_HEADERS)(VA(pDosHeader->e_lfanew));
-    if (!pNTHeaders)
-        return NULL;    // malformed, no NT headers
-
-    IMAGE_DATA_DIRECTORY *dir =
-        &pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (dir->VirtualAddress == 0 || dir->Size == 0)
-        return 0;   // no imports
-    
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)VA(dir->VirtualAddress);
-    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)pImportDesc + dir->Size);
-    return pImportDescEnd;
-}
-
-BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFirstThunk, ULONG_PTR newAddr)
-{    
     // test if IAT's not already unlocked for writing
     __try {
         // patch function
@@ -71,16 +59,9 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
     }
     // todo should ideally only catch read violations
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        // not unlocked,
-        // unlock thunk for writing
-        PIMAGE_THUNK_DATA t = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
-        SIZE_T count = 0;
-        while (t[count].u1.Function != 0)
-            count++;
 
-        SIZE_T pBytes = count * sizeof(IMAGE_THUNK_DATA);
         DWORD pOldProt = 0;
-        if (!VirtualProtect(t, pBytes, PAGE_READWRITE, &pOldProt))
+        if (!VirtualProtect(pFirstThunk, sizeof(*pFirstThunk), PAGE_READWRITE, &pOldProt))
         {
             DWORD r = GetLastError();
             printf("Unlocking FirstThunk memory for writing failed.\n Error: %d\n", r);
@@ -91,7 +72,7 @@ BOOL patchFirstThunk(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, PIMAGE_THUNK_DATA pFi
 
         // restore thunk permissions
         DWORD rePerms = 0;
-        if (!VirtualProtect(t, pBytes, pOldProt, &rePerms))
+        if (!VirtualProtect(pFirstThunk, sizeof(*pFirstThunk), pOldProt, &rePerms))
         {
             DWORD r = GetLastError();
             printf("Restoring FirstThunk permissions failed, but function has been patched.\n Error: %d\n", r);
@@ -121,7 +102,7 @@ unsigned int patchThunksOfFunc(PIMAGE_IMPORT_DESCRIPTOR pImportDesc, ULONG_PTR f
     {
         if (funcAddr == pFirstThunk->u1.Function)
         {
-            if (patchFirstThunk(pImportDesc, pFirstThunk, newAddr))
+            if (patchFirstThunk(pFirstThunk, newAddr))
                 patchedCnt++;
             else
                 (*pFailedCnt)++;
@@ -150,15 +131,17 @@ unsigned int patchThunks(char *funcName, ULONG_PTR funcAddr, ULONG_PTR newAddr, 
 {
     unsigned int patchedCnt = 0;
     // iterate dlls
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
-    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
+    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd;
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getImportDescs(&pImportDescEnd);
     if (!pImportDesc)
         return 0;   // no import directory
 
-    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
+    // stop at the terminating descriptor (Characteristics == OriginalFirstThunk == 0),
+    // or at the end of the import directory if it's missing
+    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Characteristics != 0; ++pImportDesc)
     {
-        // no import name table
-        if (!pImportDesc->OriginalFirstThunk)
+        // no IAT to patch / read from
+        if (!pImportDesc->FirstThunk)
             continue;
 
         // iterate dll's imported functions
@@ -439,23 +422,22 @@ void *MallocDebug_realloc(void *memblock, size_t size)
  */
 ULONG_PTR getFuncAddr(char *funcName)
 {
-    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getFirstImpDesc();
-    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd = getImpDescEnd();
+    PIMAGE_IMPORT_DESCRIPTOR pImportDescEnd;
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc = getImportDescs(&pImportDescEnd);
     if (!pImportDesc)
         return 0;   // no import directory
     // iterate import descriptors (dlls)
-    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Name && pImportDesc->FirstThunk; ++pImportDesc)
+    // stop at the terminating descriptor (Characteristics == OriginalFirstThunk == 0),
+    // or at the end of the import directory if it's missing
+    for (; pImportDesc + 1 <= pImportDescEnd && pImportDesc->Characteristics != 0; ++pImportDesc)
     {
+        // no IAT to patch / read from
+        if (!pImportDesc->FirstThunk)
+            continue;
         // import address table (IAT)
         PIMAGE_THUNK_DATA iat = (PIMAGE_THUNK_DATA)(VA(pImportDesc->FirstThunk));
         // import name table (INT)
-        PIMAGE_THUNK_DATA nt = pImportDesc->OriginalFirstThunk
-                                   ? (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk))
-                                   : NULL;
-        // no INT: only the address iat[i].u1.Function is available,
-        // continue with the next import descriptor
-        if (!nt)
-            continue; // no INT: names unavailable for this DLL
+        PIMAGE_THUNK_DATA nt = (PIMAGE_THUNK_DATA)(VA(pImportDesc->OriginalFirstThunk));
 
         for (size_t i = 0; iat[i].u1.Function != 0; i++)
         {
